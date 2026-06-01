@@ -1,0 +1,50 @@
+<template>
+    <lightning-card title="CV Parser" icon-name="doctype:attachment">
+        <div class="slds-p-around_medium">
+
+            <lightning-input
+                type="file"
+                label="Upload CV"
+                accept=".pdf,.doc,.docx,.txt"
+                onchange={handleFileChange}>
+            </lightning-input>
+
+            <template if:true={fileName}>
+                <p class="slds-m-top_small">
+                    <strong>Selected file:</strong> {fileName}
+                </p>
+            </template>
+
+            <lightning-button
+                class="slds-m-top_medium"
+                variant="brand"
+                label="Parse CV"
+                onclick={handleParse}
+                disabled={isParseDisabled}>
+            </lightning-button>
+
+            <template if:true={isLoading}>
+                <div class="slds-m-top_medium">
+                    <lightning-spinner alternative-text="Parsing CV"></lightning-spinner>
+                </div>
+            </template>
+
+            <template if:true={error}>
+                <div class="slds-m-top_medium slds-text-color_error">
+                    {error}
+                </div>
+            </template>
+
+            <template if:true={result}>
+                <div class="slds-m-top_medium">
+                    <h3 class="slds-text-heading_small slds-m-bottom_x-small">
+                        Parse Result
+                    </h3>
+                    <!-- If result is JSON string, show nicely -->
+                    <pre class="result-block">{result}</pre>
+                </div>
+            </template>
+
+        </div>
+    </lightning-card>
+</template>
