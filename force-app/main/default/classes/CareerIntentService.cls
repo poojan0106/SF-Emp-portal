@@ -57,7 +57,8 @@ public with sharing class CareerIntentService {
                    CreatedDate, LastModifiedDate
             FROM Career_Intent__c 
             WHERE Contact__c = :contactId 
-            AND Session_ID__c = :sessionId
+            ORDER BY CreatedDate DESC
+            // AND Session_ID__c = :sessionId
             LIMIT 1
         ];
         return intents.isEmpty() ? null : intents[0];

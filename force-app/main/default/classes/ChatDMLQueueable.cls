@@ -17,11 +17,52 @@ public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
     private Long responseTime;
     private String aiModel;
     private Boolean needsDataCopy;  // NEW: Flag for copying existing data
-    
+    private Boolean saveIntent;
+    private String answeredQuestionCount;
+
     public ChatDMLQueueable(String sessionId, String contactId, 
                             String userMessage, String assistantMessage,
                             String contextType, Integer tokenCount, 
                             Long responseTime, String aiModel, Boolean needsDataCopy) {
+        this(
+            sessionId,
+            contactId,
+            userMessage,
+            assistantMessage,
+            contextType,
+            tokenCount,
+            responseTime,
+            aiModel,
+            needsDataCopy,
+            true
+        );
+    }
+    
+    public ChatDMLQueueable(String sessionId, String contactId, 
+                            String userMessage, String assistantMessage,
+                            String contextType, Integer tokenCount, 
+                            Long responseTime, String aiModel, Boolean needsDataCopy,
+                            Boolean saveIntent) {
+        this(
+            sessionId,
+            contactId,
+            userMessage,
+            assistantMessage,
+            contextType,
+            tokenCount,
+            responseTime,
+            aiModel,
+            needsDataCopy,
+            saveIntent,
+            null
+        );
+    }
+
+    public ChatDMLQueueable(String sessionId, String contactId, 
+                            String userMessage, String assistantMessage,
+                            String contextType, Integer tokenCount, 
+                            Long responseTime, String aiModel, Boolean needsDataCopy,
+                            Boolean saveIntent, String answeredQuestionCount) {
         this.sessionId = sessionId;
         this.contactId = contactId;
         this.userMessage = userMessage;
@@ -31,6 +72,8 @@ public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
         this.responseTime = responseTime;
         this.aiModel = aiModel;
         this.needsDataCopy = needsDataCopy != null ? needsDataCopy : false;
+        this.saveIntent = saveIntent != null ? saveIntent : true;
+        this.answeredQuestionCount = answeredQuestionCount;
     }
     
     public void execute(QueueableContext qc) {
@@ -76,8 +119,8 @@ public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
             }
             
             // ============ DML 3: Extract & Update Session Career Intent ============
-            if (shouldExtractIntent(contextType)) {
-                extractAndUpdateSessionIntent(contactId, sessionId, userMessage, cleanedAssistantMsg);
+            if (saveIntent && shouldExtractIntent(contextType)) {
+                extractAndUpdateSessionIntent(contactId, sessionId, userMessage, cleanedAssistantMsg, answeredQuestionCount);
             }
             
             // ============ DML 4: Update Contact Timestamp ============
@@ -92,7 +135,18 @@ public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
     }
     
     // Extract intent and update/create session-specific record
-    private void extractAndUpdateSessionIntent(String contactId, String sessionId, String userMsg, String aiMsg) {
+    private void extractAndUpdateSessionIntent(String contactId, String sessionId, String userMsg, String aiMsg, String answeredQuestionCount) {
+        if (String.isNotBlank(answeredQuestionCount)) {
+            Career_Intent__c mappedIntent = getSessionIntent(contactId, sessionId);
+            Boolean mappedChanged = saveByQuestionCount(mappedIntent, userMsg, answeredQuestionCount);
+            if (mappedChanged) {
+                mappedIntent.Last_Check_In__c = DateTime.now();
+                upsert mappedIntent;
+                System.debug('Updated Career Intent by questionCount ' + answeredQuestionCount + ' for session: ' + sessionId);
+            }
+            return;
+        }
+
         // CRITICAL: Skip if this is a resume decision response
         if (isResumeDecision(userMsg) && !hasRemotePreferenceSignal(aiMsg)) {
             System.debug('⏭️ Skipping save - this is a resume decision, not a career answer');
@@ -103,6 +157,7 @@ public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
         Career_Intent__c intent = getSessionIntent(contactId, sessionId);
         
         Boolean changed = false;
+
         
         // FIXED: Check what question was JUST ANSWERED (in AI's next response)
         // The AI asks the NEXT question, so user just answered the PREVIOUS one
@@ -224,6 +279,65 @@ public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
         }
     }
     
+    private Boolean saveByQuestionCount(Career_Intent__c intent, String userMsg, String answeredQuestionCount) {
+        Integer questionNumber;
+        try {
+            questionNumber = Integer.valueOf(answeredQuestionCount);
+        } catch (Exception e) {
+            return false;
+        }
+
+        String cleaned = cleanMessage(userMsg);
+        if (String.isBlank(cleaned)) return false;
+
+        if (questionNumber == 1) {
+            intent.Short_Term_Goal__c = cleaned;
+            return true;
+        }
+        if (questionNumber == 2) {
+            intent.Medium_Term_Goal__c = cleaned;
+            return true;
+        }
+        if (questionNumber == 3) {
+            intent.Long_Term_Goal__c = cleaned;
+            return true;
+        }
+        if (questionNumber == 4) {
+            intent.Aspirational_Goal__c = cleaned;
+            return true;
+        }
+        if (questionNumber == 5) {
+            intent.Willing_to_Relocate__c = userMsg;
+            return true;
+        }
+        if (questionNumber == 6) {
+            intent.Short_Term_Remote__c = userMsg;
+            return true;
+        }
+        if (questionNumber == 7) {
+            intent.Min_Salary_Expactation__c = normalizeSalary(userMsg);
+            return intent.Min_Salary_Expactation__c != null;
+        }
+        if (questionNumber == 8) {
+            intent.Max_Salary_Expactation__c = normalizeSalary(userMsg);
+            return intent.Max_Salary_Expactation__c != null;
+        }
+        if (questionNumber == 9) {
+            intent.Short_Term_Company_Size__c = userMsg;
+            return true;
+        }
+        if (questionNumber == 10) {
+            intent.Industry_Preferences__c = cleaned;
+            return true;
+        }
+        if (questionNumber == 11) {
+            intent.Role_Title__c = cleaned;
+            return true;
+        }
+
+        return false;
+    }
+    
     // Get intent for THIS SESSION ONLY (creates new if doesn't exist for session)
     private Career_Intent__c getSessionIntent(String contactId, String sessionId) {
         List<Career_Intent__c> intents = [
@@ -233,8 +347,9 @@ public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
                    Min_Salary_Expactation__c, Max_Salary_Expactation__c, 
                    Short_Term_Company_Size__c, Industry_Preferences__c, Role_Title__c
             FROM Career_Intent__c 
-            WHERE Contact__c = :contactId 
-            AND Session_ID__c = :sessionId
+            WHERE Contact__c = :contactId
+            ORDER BY CreatedDate DESC 
+            // AND Session_ID__c = :sessionId
             LIMIT 1
         ];
         
@@ -276,7 +391,7 @@ public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
                        Short_Term_Company_Size__c, Industry_Preferences__c, Role_Title__c
                 FROM Career_Intent__c
                 WHERE Contact__c = :contactId
-                AND Session_ID__c != :sessionId
+                // AND Session_ID__c != :sessionId
                 ORDER BY CreatedDate DESC
                 LIMIT 1
             ];
@@ -296,7 +411,8 @@ public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
                        Short_Term_Company_Size__c, Industry_Preferences__c, Role_Title__c
                 FROM Career_Intent__c
                 WHERE Contact__c = :contactId
-                AND Session_ID__c = :sessionId
+                ORDER BY CreatedDate DESC
+             //   AND Session_ID__c = :sessionId
                 LIMIT 1
             ];
             

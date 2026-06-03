@@ -82,7 +82,20 @@ global with sharing class BlakeneyRestAPI {
         System.debug('═══════════════════════════════════════════════════════');
         
         BlakeneyChatService.ChatResponse response = BlakeneyChatService.processMessage(
-            cmr.sessionId, cmr.contactId, cmr.message, cmr.contextType, questionCount
+            cmr.sessionId,
+            cmr.contactId,
+            cmr.message,
+            cmr.contextType,
+            questionCount,
+            cmr.assistantMessage,
+            cmr.quickReplies,
+            cmr.inputActive,
+            cmr.inputType,
+            cmr.inputPlaceholder,
+            cmr.advanceQuestion,
+            cmr.saveIntent,
+            cmr.aiModel,
+            cmr.totalTokens
         );
         
         System.debug('═══════════════════════════════════════════════════════');
@@ -281,6 +294,15 @@ global with sharing class BlakeneyRestAPI {
         public String message;
         public String contextType;
         public String questionCount;
+        public String assistantMessage;
+        public List<BlakeneyChatService.QuickReply> quickReplies;
+        public Boolean inputActive;
+        public String inputType;
+        public String inputPlaceholder;
+        public Boolean advanceQuestion;
+        public Boolean saveIntent;
+        public String aiModel;
+        public Integer totalTokens;
     }
     
     global class ChatMessageResponse {
