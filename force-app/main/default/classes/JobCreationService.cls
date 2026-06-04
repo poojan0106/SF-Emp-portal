@@ -47,6 +47,10 @@ public class JobCreationService {
     );
     
     insert campaign;
+
+    if (!jobReq.isDraft) {
+      notifyInterestedCandidatesForNewJob(campaign, jobReq);
+    }
     
     return new JobCreationResponse(
       true,
@@ -54,6 +58,45 @@ public class JobCreationService {
       campaign.Status,
       'Job ' + (jobReq.isDraft ? 'saved as draft' : 'published') + ' successfully'
     );
+  }
+
+  private static void notifyInterestedCandidatesForNewJob(Campaign campaign, JobCreationRequest jobReq) {
+    List<Swipe_Event__c> swipes = [
+      SELECT Candidate__c
+      FROM Swipe_Event__c
+      WHERE Employers__c = :jobReq.accountId
+      AND Direction__c = 'Right'
+      AND Is_Undone__c = false
+      LIMIT 2000
+    ];
+
+    if (swipes.isEmpty()) return;
+
+    Account employer = [
+      SELECT Name
+      FROM Account
+      WHERE Id = :jobReq.accountId
+      LIMIT 1
+    ];
+
+    Set<Id> candidateIds = new Set<Id>();
+    for (Swipe_Event__c swipe : swipes) {
+      candidateIds.add(swipe.Candidate__c);
+    }
+
+    List<NotificationService.NotificationRequest> requests = new List<NotificationService.NotificationRequest>();
+    for (Id candidateId : candidateIds) {
+      NotificationService.NotificationRequest request = new NotificationService.NotificationRequest();
+      request.recipientId = candidateId;
+      request.notificationType = 'Company_Hiring';
+      request.title = 'Company you swiped is now hiring';
+      request.description = employer.Name + ' posted ' + campaign.Name + ' that may fit your profile.';
+      request.linkTo = '/discover-employers';
+      request.priority = 'Normal';
+      requests.add(request);
+    }
+
+    NotificationService.notifyMany(requests);
   }
 
 

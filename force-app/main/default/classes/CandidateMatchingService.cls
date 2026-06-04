@@ -45,16 +45,28 @@ public class CandidateMatchingService {
         List<String> niceToHaveSkills = parseSkills(job.Nice_To_Have_Skills__c);
         
         Integer matchingCount = 0;
+        List<NotificationService.NotificationRequest> notificationRequests = new List<NotificationService.NotificationRequest>();
         for (CampaignMember member : poolMembers) {
             Contact candidate = candidates.get(member.ContactId);
             if (candidate != null) {
                 Integer score = calculateMatchScore(candidate, mustHaveSkills, niceToHaveSkills, job);
                 member.AI_Match_Score__c = score;
-                if (score >= 70) matchingCount++;
+                if (score >= 70) {
+                    matchingCount++;
+                    NotificationService.NotificationRequest request = new NotificationService.NotificationRequest();
+                    request.recipientId = member.ContactId;
+                    request.notificationType = 'Job_Match';
+                    request.title = 'New job match found';
+                    request.description = job.Name + ' matches your career profile.';
+                    request.linkTo = '/discover-employers';
+                    request.priority = 'Normal';
+                    notificationRequests.add(request);
+                }
             }
         }
         
         update poolMembers;
+        NotificationService.notifyMany(notificationRequests);
         
         // Update job matching count
         job.Matching_Candidate_Count__c = matchingCount;

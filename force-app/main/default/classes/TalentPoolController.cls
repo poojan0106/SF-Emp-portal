@@ -180,6 +180,12 @@ public with sharing class TalentPoolController {
             member.Campaign.Employer__r.Name,
             message
         );
+
+        NotificationService.notifyInterviewInvitation(
+            member.ContactId,
+            member.Campaign.Employer__r.Name,
+            null
+        );
     }
     
     @AuraEnabled

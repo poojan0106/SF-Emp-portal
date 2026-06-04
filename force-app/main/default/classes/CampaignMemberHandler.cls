@@ -56,6 +56,8 @@
         if (!campaignIds.isEmpty()) {
             updateTalentPoolMetrics(campaignIds);
         }
+
+        createApplicationStatusNotifications(newMembers, oldMap);
     }
     
     /**
@@ -147,5 +149,39 @@
     @future
     private static void updateMetricsAsync(Set<Id> campaignIds) {
         TalentPoolMetricsService.updateMetricsForCampaigns(campaignIds);
+    }
+
+    private static void createApplicationStatusNotifications(
+        List<CampaignMember> newMembers,
+        Map<Id, CampaignMember> oldMap
+    ) {
+        Set<Id> changedMemberIds = new Set<Id>();
+
+        for (CampaignMember member : newMembers) {
+            CampaignMember oldMember = oldMap.get(member.Id);
+            if (oldMember != null && member.Status != oldMember.Status && member.Status != 'Interview_Requested') {
+                changedMemberIds.add(member.Id);
+            }
+        }
+
+        if (changedMemberIds.isEmpty()) return;
+
+        List<NotificationService.NotificationRequest> requests = new List<NotificationService.NotificationRequest>();
+        for (CampaignMember member : [
+            SELECT Id, ContactId, Status, Campaign.Name
+            FROM CampaignMember
+            WHERE Id IN :changedMemberIds
+        ]) {
+            NotificationService.NotificationRequest request = new NotificationService.NotificationRequest();
+            request.recipientId = member.ContactId;
+            request.notificationType = 'Application';
+            request.title = 'Application status update';
+            request.description = member.Campaign.Name + ' changed to ' + member.Status + '.';
+            request.linkTo = '/dashboard';
+            request.priority = 'Normal';
+            requests.add(request);
+        }
+
+        NotificationService.notifyMany(requests);
     }
 }
