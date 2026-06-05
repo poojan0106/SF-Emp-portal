@@ -45,8 +45,8 @@ global class SubscriptionQueryController {
           Subscription_End_Date__c,
           Updated_At__c
         FROM Employer_Subscription__c
-        WHERE Account__c = :accountId AND Subscription_Name__c = 'test'
-        ORDER BY Updated_At__c DESC
+        WHERE Account__c = :accountId
+        ORDER BY Updated_At__c DESC, CreatedDate DESC
         LIMIT 1
       ];
 

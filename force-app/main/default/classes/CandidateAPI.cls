@@ -514,6 +514,13 @@ global class CandidateAPI {
             }
             
             // ✅ BULK CREATE: Build all Task records
+            Account employerAccount = [
+                SELECT Name
+                FROM Account
+                WHERE Id = :accountId
+                LIMIT 1
+            ];
+
             List<Task> interviewTasks = new List<Task>();
             
             for (CampaignMember campaignMember : campaignMembers) {
@@ -561,6 +568,7 @@ global class CandidateAPI {
             
             // Process results
             List<InterviewTaskResult> taskResults = new List<InterviewTaskResult>();
+            List<NotificationService.NotificationRequest> notificationRequests = new List<NotificationService.NotificationRequest>();
             Integer successCount = 0;
             Integer failureCount = 0;
             
@@ -577,6 +585,17 @@ global class CandidateAPI {
                     result.taskId = sr.getId();
                     result.message = 'Interview task created successfully';
                     successCount++;
+
+                    NotificationService.NotificationRequest notificationRequest =
+                        new NotificationService.NotificationRequest();
+                    notificationRequest.recipientId = member.ContactId;
+                    notificationRequest.notificationType = 'Interview';
+                    notificationRequest.title = 'Interview invitation from ' + employerAccount.Name;
+                    notificationRequest.description = 'You have been invited to interview for ' +
+                        interviewReq.position + '. Review and confirm.';
+                    notificationRequest.linkTo = '/dashboard';
+                    notificationRequest.priority = 'Urgent';
+                    notificationRequests.add(notificationRequest);
                     System.debug('✓ Task created for candidate: ' + member.Contact.Name);
                 } else {
                     result.taskId = null;
@@ -589,6 +608,8 @@ global class CandidateAPI {
                 taskResults.add(result);
             }
             
+            NotificationService.notifyMany(notificationRequests);
+
             System.debug('Success: ' + successCount + ', Failures: ' + failureCount);
             
             // Build response

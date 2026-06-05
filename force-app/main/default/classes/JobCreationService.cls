@@ -43,13 +43,15 @@ public class JobCreationService {
       R_ATS__Minimum_Salary__c = jobReq.salMin != null ? Decimal.valueOf(jobReq.salMin) : null,
       R_ATS__Maximum_Salary__c = jobReq.salMax != null ? Decimal.valueOf(jobReq.salMax) : null,
       Remote_Position__c = jobReq.remote,
-      R_ATS__Location__c = jobReq.remote ? 'Remote' : jobReq.loc
+      R_ATS__Location__c = jobReq.remote ? 'Remote' : jobReq.loc,
+      Must_Have_Skills__c = jobReq.skills == null ? null : JSON.serialize(jobReq.skills)
     );
     
     insert campaign;
 
     if (!jobReq.isDraft) {
       notifyInterestedCandidatesForNewJob(campaign, jobReq);
+      CandidateMatchingService.matchCandidatesToJob(campaign.Id, jobReq.accountId);
     }
     
     return new JobCreationResponse(

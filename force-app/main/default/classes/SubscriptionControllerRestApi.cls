@@ -133,8 +133,8 @@
             Subscription_Start_Date__c,
             Subscription_End_Date__c
           FROM Employer_Subscription__c
-          WHERE Account__c = :accountId AND Subscription_Name__c = 'test'
-          Order By CreatedDate ASC 
+          WHERE Account__c = :accountId
+          ORDER BY CreatedDate DESC
 		  LIMIT 1
         ];
 
@@ -204,26 +204,40 @@
         );
         update acc;
         System.debug('Account updated: ' + accountId);
+        unlockTalentPoolProfiles(accountId);
 
         // Parse dates safely
         Date startDate = parseIsoDatetime(currentPeriodStart);
         Date endDate = parseIsoDatetime(currentPeriodEnd);
         System.debug('Parsed dates - Start: ' + startDate + ', End: ' + endDate);
 
-        // Create Subscription record
-        Employer_Subscription__c subscription = new Employer_Subscription__c(
-          Account__c = accountId,
-          Status__c = 'Active',
-          Stripe_Subscription_ID__c = stripeSubscriptionId,
-          Stripe_Customer_ID__c = stripeCustomerId,
-          Subscription_Start_Date__c = startDate,
-          Subscription_End_Date__c = Date.Today().addDays(28),
-          Subscription_Name__c = productName,
-          Subscription_Tier__c = 'Professional',
-          Updated_At__c = DateTime.now()
-        );
-        insert subscription;
-        System.debug('Subscription created: ' + subscription.Id);
+        List<Employer_Subscription__c> existingSubscriptions = [
+          SELECT Id
+          FROM Employer_Subscription__c
+          WHERE Stripe_Subscription_ID__c = :stripeSubscriptionId
+             OR Account__c = :accountId
+          ORDER BY CreatedDate DESC
+          LIMIT 1
+        ];
+
+        Employer_Subscription__c subscription;
+        if (existingSubscriptions.isEmpty()) {
+          subscription = new Employer_Subscription__c(Account__c = accountId);
+        } else {
+          subscription = existingSubscriptions[0];
+        }
+
+        subscription.Status__c = 'Active';
+        subscription.Stripe_Subscription_ID__c = stripeSubscriptionId;
+        subscription.Stripe_Customer_ID__c = stripeCustomerId;
+        subscription.Subscription_Start_Date__c = startDate;
+        subscription.Subscription_End_Date__c = endDate != null ? endDate : Date.Today().addDays(28);
+        subscription.Subscription_Name__c = String.isNotBlank(productName) ? productName : plan;
+        subscription.Subscription_Tier__c = 'Professional';
+        subscription.Updated_At__c = DateTime.now();
+
+        upsert subscription;
+        System.debug('Subscription upserted: ' + subscription.Id);
 
         res.statusCode = 200;
         res.responseBody = Blob.valueOf(JSON.serialize(new Map<String, Object>{
@@ -420,6 +434,7 @@
           Profile_Access_Enabled__c = true
         );
         update acc;
+        unlockTalentPoolProfiles(accountId);
         System.debug('Profile access unlocked for: ' + accountId);
 
         res.statusCode = 200;
@@ -442,5 +457,25 @@
         'success' => false,
         'message' => message
       }));
+    }
+
+    private static void unlockTalentPoolProfiles(String accountId) {
+      List<CampaignMember> membersToUnlock = [
+        SELECT Id, Full_Profile_Unlocked__c, Unlocked_Date__c
+        FROM CampaignMember
+        WHERE Campaign.Employer__c = :accountId
+        AND Full_Profile_Unlocked__c = false
+        LIMIT 10000
+      ];
+
+      for (CampaignMember member : membersToUnlock) {
+        member.Full_Profile_Unlocked__c = true;
+        member.Unlocked_Date__c = DateTime.now();
+      }
+
+      if (!membersToUnlock.isEmpty()) {
+        update membersToUnlock;
+        System.debug('Unlocked talent pool profiles: ' + membersToUnlock.size());
+      }
     }
   }
