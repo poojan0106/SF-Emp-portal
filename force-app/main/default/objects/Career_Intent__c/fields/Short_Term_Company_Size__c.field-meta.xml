@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Short_Term_Company_Size__c</fullName>
+    <description>Preferred company size</description>
+    <label>Short Term Company Size</label>
+    <required>false</required>
+    <trackHistory>false</trackHistory>
+    <trackTrending>false</trackTrending>
+    <type>Picklist</type>
+    <valueSet>
+        <restricted>true</restricted>
+        <valueSetDefinition>
+            <sorted>false</sorted>
+            <value>
+                <fullName>Startup (1-50)</fullName>
+                <default>false</default>
+                <label>Startup (1-50)</label>
+            </value>
+            <value>
+                <fullName>Small (51-200)</fullName>
+                <default>false</default>
+                <label>Small (51-200)</label>
+            </value>
+            <value>
+                <fullName>Medium (201-1000)</fullName>
+                <default>false</default>
+                <label>Medium (201-1000)</label>
+            </value>
+            <value>
+                <fullName>Large (1001-5000)</fullName>
+                <default>false</default>
+                <label>Large (1001-5000)</label>
+            </value>
+            <value>
+                <fullName>Enterprise (5000+)</fullName>
+                <default>false</default>
+                <label>Enterprise (5000+)</label>
+            </value>
+            <value>
+                <fullName>No Preference</fullName>
+                <default>false</default>
+                <label>No Preference</label>
+            </value>
+        </valueSetDefinition>
+    </valueSet>
+</CustomField>

@@ -4,17 +4,42 @@
     <label>Type</label>
     <required>true</required>
     <trackHistory>true</trackHistory>
+    <trackTrending>false</trackTrending>
     <type>Picklist</type>
     <valueSet>
         <restricted>true</restricted>
         <valueSetDefinition>
             <sorted>false</sorted>
-            <value><fullName>Job_Match</fullName><default>false</default><label>Job Match</label></value>
-            <value><fullName>Interview</fullName><default>false</default><label>Interview</label></value>
-            <value><fullName>Application</fullName><default>false</default><label>Application</label></value>
-            <value><fullName>Company_Hiring</fullName><default>false</default><label>Company Hiring</label></value>
-            <value><fullName>Message</fullName><default>false</default><label>Message</label></value>
-            <value><fullName>Profile_Reminder</fullName><default>false</default><label>Profile Reminder</label></value>
+            <value>
+                <fullName>Job_Match</fullName>
+                <default>false</default>
+                <label>Job Match</label>
+            </value>
+            <value>
+                <fullName>Interview</fullName>
+                <default>false</default>
+                <label>Interview</label>
+            </value>
+            <value>
+                <fullName>Application</fullName>
+                <default>false</default>
+                <label>Application</label>
+            </value>
+            <value>
+                <fullName>Company_Hiring</fullName>
+                <default>false</default>
+                <label>Company Hiring</label>
+            </value>
+            <value>
+                <fullName>Message</fullName>
+                <default>false</default>
+                <label>Message</label>
+            </value>
+            <value>
+                <fullName>Profile_Reminder</fullName>
+                <default>false</default>
+                <label>Profile Reminder</label>
+            </value>
         </valueSetDefinition>
     </valueSet>
 </CustomField>

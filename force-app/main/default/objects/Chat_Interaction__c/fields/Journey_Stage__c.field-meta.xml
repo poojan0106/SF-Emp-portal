@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Journey_Stage__c</fullName>
+    <description>Current stage in user journey</description>
+    <label>Journey Stage</label>
+    <required>true</required>
+    <trackHistory>false</trackHistory>
+    <trackTrending>false</trackTrending>
+    <type>Picklist</type>
+    <valueSet>
+        <restricted>true</restricted>
+        <valueSetDefinition>
+            <sorted>false</sorted>
+            <value>
+                <fullName>Onboarding</fullName>
+                <default>true</default>
+                <label>Onboarding</label>
+            </value>
+            <value>
+                <fullName>Intent - NOW</fullName>
+                <default>false</default>
+                <label>Intent - NOW</label>
+            </value>
+            <value>
+                <fullName>Intent - LATER</fullName>
+                <default>false</default>
+                <label>Intent - LATER</label>
+            </value>
+            <value>
+                <fullName>Intent - Confirm</fullName>
+                <default>false</default>
+                <label>Intent - Confirm</label>
+            </value>
+            <value>
+                <fullName>Active Chat</fullName>
+                <default>false</default>
+                <label>Active Chat</label>
+            </value>
+            <value>
+                <fullName>Check-in</fullName>
+                <default>false</default>
+                <label>Check-in</label>
+            </value>
+            <value>
+                <fullName>Interview Prep</fullName>
+                <default>false</default>
+                <label>Interview Prep</label>
+            </value>
+            <value>
+                <fullName>Completed</fullName>
+                <default>false</default>
+                <label>Completed</label>
+            </value>
+        </valueSetDefinition>
+    </valueSet>
+</CustomField>

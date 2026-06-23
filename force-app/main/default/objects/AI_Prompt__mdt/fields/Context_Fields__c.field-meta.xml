@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Context_Fields__c</fullName>
+    <description>Which Contact fields to include</description>
+    <fieldManageability>DeveloperControlled</fieldManageability>
+    <label>Context Fields</label>
+    <length>5000</length>
+    <type>LongTextArea</type>
+    <visibleLines>4</visibleLines>
+</CustomField>

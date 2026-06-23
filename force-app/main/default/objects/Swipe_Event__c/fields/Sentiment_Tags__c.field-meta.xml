@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Sentiment_Tags__c</fullName>
+    <description>Predefined reasons</description>
+    <label>Sentiment Tags</label>
+    <required>false</required>
+    <trackTrending>false</trackTrending>
+    <type>MultiselectPicklist</type>
+    <valueSet>
+        <restricted>true</restricted>
+        <valueSetDefinition>
+            <sorted>false</sorted>
+            <value>
+                <fullName>Good Culture Fit</fullName>
+                <default>false</default>
+                <label>Good Culture Fit</label>
+            </value>
+            <value>
+                <fullName>Interesting Role</fullName>
+                <default>false</default>
+                <label>Interesting Role</label>
+            </value>
+            <value>
+                <fullName>Good Compensation</fullName>
+                <default>false</default>
+                <label>Good Compensation</label>
+            </value>
+            <value>
+                <fullName>Growth Opportunity</fullName>
+                <default>false</default>
+                <label>Growth Opportunity</label>
+            </value>
+            <value>
+                <fullName>Location Preference</fullName>
+                <default>false</default>
+                <label>Location Preference</label>
+            </value>
+            <value>
+                <fullName>Remote Work</fullName>
+                <default>false</default>
+                <label>Remote Work</label>
+            </value>
+            <value>
+                <fullName>Company Reputation</fullName>
+                <default>false</default>
+                <label>Company Reputation</label>
+            </value>
+            <value>
+                <fullName>Not a Fit</fullName>
+                <default>false</default>
+                <label>Not a Fit</label>
+            </value>
+            <value>
+                <fullName>Wrong Industry</fullName>
+                <default>false</default>
+                <label>Wrong Industry</label>
+            </value>
+            <value>
+                <fullName>Location Issue</fullName>
+                <default>false</default>
+                <label>Location Issue</label>
+            </value>
+        </valueSetDefinition>
+    </valueSet>
+    <visibleLines>4</visibleLines>
+</CustomField>

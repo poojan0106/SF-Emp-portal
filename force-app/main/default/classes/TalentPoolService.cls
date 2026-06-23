@@ -28,26 +28,28 @@ public with sharing class TalentPoolService {
             // Initial Interest Stage
         new StatusConfig('Interested', true, true, 10),           // Swipe Right (Default)
         
+            new StatusConfig('In League', true, true, 20),
+        
         // Employer Engagement Stage
-        new StatusConfig('Viewed', true, false, 20),              // Employer Viewed
-        new StatusConfig('Unlocked', true, false, 30),            // Profile Revealed
+        new StatusConfig('Viewed', true, false, 30),              // Employer Viewed
+        new StatusConfig('Unlocked', true, false, 40),            // Profile Revealed
         
         // Interview Stage
-        new StatusConfig('Interview_Requested', true, false, 40), // Interview Requested
-        new StatusConfig('Interview_Scheduled', true, false, 50), // Interview Scheduled
-        new StatusConfig('Interviewed', true, false, 60),         // Interviewed
+        new StatusConfig('Interview_Requested', true, false, 50), // Interview Requested
+        new StatusConfig('Interview_Scheduled', true, false, 60), // Interview Scheduled
+        new StatusConfig('Interviewed', true, false, 70),         // Interviewed
         
         // Outcome Stage
-        new StatusConfig('Offered', true, false, 70),             // Offer Made
-        new StatusConfig('Placed', true, false, 80),              // Successfully Placed
+        new StatusConfig('Offered', true, false, 80),             // Offer Made
+        new StatusConfig('Placed', true, false, 90),              // Successfully Placed
         
         // Negative Outcomes
-        new StatusConfig('Rejected', false, false, 90),           // Rejected by Employer
-        new StatusConfig('Withdrawn', false, false, 100),         // Candidate Withdrew
+        new StatusConfig('Rejected', false, false, 100),           // Rejected by Employer
+        new StatusConfig('Withdrawn', false, false, 110),         // Candidate Withdrew
         
         // System Statuses (existing)
-        new StatusConfig('Expired', false, false, 110),           // Auto-expired after 12 months
-        new StatusConfig('Opted_Out', false, false, 120)
+        new StatusConfig('Expired', false, false, 120),           // Auto-expired after 12 months
+        new StatusConfig('Opted_Out', false, false, 130)
     };
     
     /**
@@ -89,8 +91,9 @@ public with sharing class TalentPoolService {
                     Name = employers.get(empId).Name + ' - Talent Pool',
                     Type = 'Employer Interest Pool',
                     Pool_Type__c = 'Employer_Interest',  // Main pool type
-                    Status = 'In Progress',
+                    Status = 'In League',
                     IsActive = true,
+                    Entry_Timestamp__c = System.now(),
                     Employer__c = empId
                 );
                 

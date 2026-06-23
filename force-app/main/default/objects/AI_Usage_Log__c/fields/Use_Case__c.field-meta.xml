@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Use_Case__c</fullName>
+    <description>What the call was for</description>
+    <label>Use Case</label>
+    <required>false</required>
+    <trackTrending>false</trackTrending>
+    <type>Picklist</type>
+    <valueSet>
+        <restricted>true</restricted>
+        <valueSetDefinition>
+            <sorted>false</sorted>
+            <value>
+                <fullName>Chat Response</fullName>
+                <default>false</default>
+                <label>Chat Response</label>
+            </value>
+            <value>
+                <fullName>Intent Extraction</fullName>
+                <default>false</default>
+                <label>Intent Extraction</label>
+            </value>
+            <value>
+                <fullName>Pathway Generation</fullName>
+                <default>false</default>
+                <label>Pathway Generation</label>
+            </value>
+            <value>
+                <fullName>Sentiment Analysis</fullName>
+                <default>false</default>
+                <label>Sentiment Analysis</label>
+            </value>
+            <value>
+                <fullName>Summary Generation</fullName>
+                <default>false</default>
+                <label>Summary Generation</label>
+            </value>
+            <value>
+                <fullName>Skill Matching</fullName>
+                <default>false</default>
+                <label>Skill Matching</label>
+            </value>
+            <value>
+                <fullName>Other</fullName>
+                <default>false</default>
+                <label>Other</label>
+            </value>
+        </valueSetDefinition>
+    </valueSet>
+</CustomField>

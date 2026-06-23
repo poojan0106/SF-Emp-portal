@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Free_Tier_Enabled__c</fullName>
+    <defaultValue>false</defaultValue>
+    <description>Available on Free</description>
+    <fieldManageability>DeveloperControlled</fieldManageability>
+    <label>Free Tier</label>
+    <type>Checkbox</type>
+</CustomField>

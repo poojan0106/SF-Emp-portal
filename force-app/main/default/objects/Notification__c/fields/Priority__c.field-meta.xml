@@ -4,15 +4,32 @@
     <label>Priority</label>
     <required>true</required>
     <trackHistory>true</trackHistory>
+    <trackTrending>false</trackTrending>
     <type>Picklist</type>
     <valueSet>
         <restricted>true</restricted>
         <valueSetDefinition>
             <sorted>false</sorted>
-            <value><fullName>Low</fullName><default>false</default><label>Low</label></value>
-            <value><fullName>Normal</fullName><default>true</default><label>Normal</label></value>
-            <value><fullName>High</fullName><default>false</default><label>High</label></value>
-            <value><fullName>Urgent</fullName><default>false</default><label>Urgent</label></value>
+            <value>
+                <fullName>Low</fullName>
+                <default>false</default>
+                <label>Low</label>
+            </value>
+            <value>
+                <fullName>Normal</fullName>
+                <default>true</default>
+                <label>Normal</label>
+            </value>
+            <value>
+                <fullName>High</fullName>
+                <default>false</default>
+                <label>High</label>
+            </value>
+            <value>
+                <fullName>Urgent</fullName>
+                <default>false</default>
+                <label>Urgent</label>
+            </value>
         </valueSetDefinition>
     </valueSet>
 </CustomField>

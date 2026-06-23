@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Positive_Signals__c</fullName>
+    <label>Positive Signals</label>
+    <required>false</required>
+    <trackTrending>false</trackTrending>
+    <type>MultiselectPicklist</type>
+    <valueSet>
+        <restricted>true</restricted>
+        <valueSetDefinition>
+            <sorted>false</sorted>
+            <value>
+                <fullName>Company culture</fullName>
+                <default>false</default>
+                <label>Company culture</label>
+            </value>
+            <value>
+                <fullName>Tech stack</fullName>
+                <default>false</default>
+                <label>Tech stack</label>
+            </value>
+            <value>
+                <fullName>Growth opportunity</fullName>
+                <default>false</default>
+                <label>Growth opportunity</label>
+            </value>
+            <value>
+                <fullName>Work environment</fullName>
+                <default>false</default>
+                <label>Work environment</label>
+            </value>
+            <value>
+                <fullName>Leadership team</fullName>
+                <default>false</default>
+                <label>Leadership team</label>
+            </value>
+            <value>
+                <fullName>Mission/values alignment</fullName>
+                <default>false</default>
+                <label>Mission/values alignment</label>
+            </value>
+            <value>
+                <fullName>Salary/benefits</fullName>
+                <default>false</default>
+                <label>Salary/benefits</label>
+            </value>
+            <value>
+                <fullName>Location</fullName>
+                <default>false</default>
+                <label>Location</label>
+            </value>
+            <value>
+                <fullName>Remote work</fullName>
+                <default>false</default>
+                <label>Remote work</label>
+            </value>
+            <value>
+                <fullName>Work-life balance</fullName>
+                <default>false</default>
+                <label>Work-life balance</label>
+            </value>
+            <value>
+                <fullName>Compensation/benefits</fullName>
+                <default>false</default>
+                <label>Compensation/benefits</label>
+            </value>
+            <value>
+                <fullName>Remote flexibility</fullName>
+                <default>false</default>
+                <label>Remote flexibility</label>
+            </value>
+            <value>
+                <fullName>Industry reputation</fullName>
+                <default>false</default>
+                <label>Industry reputation</label>
+            </value>
+        </valueSetDefinition>
+    </valueSet>
+    <visibleLines>4</visibleLines>
+</CustomField>

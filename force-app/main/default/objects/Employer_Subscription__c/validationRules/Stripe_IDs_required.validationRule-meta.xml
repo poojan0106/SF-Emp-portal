@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ValidationRule xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Stripe_IDs_required</fullName>
+    <active>true</active>
+    <errorConditionFormula>AND(
+  NOT(ISPICKVAL(Subscription_Tier__c, &apos;Free&apos;)),
+  ISBLANK(Stripe_Customer_ID__c)
+)</errorConditionFormula>
+    <errorDisplayField>Stripe_Customer_ID__c</errorDisplayField>
+    <errorMessage>Stripe IDs required for non-Free tiers</errorMessage>
+</ValidationRule>

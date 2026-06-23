@@ -4,5 +4,6 @@
     <defaultValue>false</defaultValue>
     <label>Is Archived</label>
     <trackHistory>true</trackHistory>
+    <trackTrending>false</trackTrending>
     <type>Checkbox</type>
 </CustomField>
