@@ -71,8 +71,9 @@ public with sharing class TalentPoolController {
         // Build query
         String query = 'SELECT Id, ContactId, Contact.FirstName, Contact.LastName, Contact.Email, ' +
             'Contact.Phone, Contact.MailingCity, Contact.R_ATS__Skills__c, Contact.Job_Role__c, Contact.Years_Experience__c, ' +
-            'AI_Match_Score__c, Sentiment_Tags__c, Interest_Date__c, Full_Profile_Unlocked__c, Status ' +
-            'FROM CampaignMember WHERE CampaignId = :poolId AND Status = \'Interested\'';
+            'AI_Match_Score__c, Sentiment_Tags__c, Interest_Date__c, Full_Profile_Unlocked__c, Status, Swipe_Event__c, ' +
+            'Identity_Reveal_Status__c, Identity_Reveal_Requested_Date__c, Identity_Reveal_Responded_Date__c ' +
+            'FROM CampaignMember WHERE CampaignId = :poolId AND Status IN (\'Interested\')';
         
         // Apply filters
         if (filters != null) {
@@ -136,7 +137,8 @@ public with sharing class TalentPoolController {
         CampaignMember member = [
             SELECT Id, ContactId, Contact.FirstName, Contact.LastName, Contact.Email,
                    Contact.Phone, Contact.MailingCity,Contact.Job_Role__c, Contact.R_ATS__Skills__c, Contact.Years_Experience__c,
-                   AI_Match_Score__c, Sentiment_Tags__c, Full_Profile_Unlocked__c,Interest_Date__c
+                   AI_Match_Score__c, Sentiment_Tags__c, Full_Profile_Unlocked__c,Interest_Date__c,
+                   Identity_Reveal_Status__c, Identity_Reveal_Requested_Date__c, Identity_Reveal_Responded_Date__c
             FROM CampaignMember
             WHERE Id = :campaignMemberId
         ];
@@ -155,6 +157,70 @@ public with sharing class TalentPoolController {
         SubscriptionService.trackFeatureUsage(accountId, 'Profile_Unlock');
         
         return new CandidateWrapper(member, 'Professional', 0);
+    }
+
+    @AuraEnabled
+    public static CandidateWrapper requestIdentityReveal(Id campaignMemberId, Id accountId) {
+        SubscriptionService.validateFeatureAccess(accountId, 'Profile_Unlock');
+
+        CampaignMember member = [
+            SELECT Id, ContactId, Contact.FirstName, Contact.LastName, Contact.Email,
+                   Contact.Phone, Contact.MailingCity, Contact.Job_Role__c, Contact.R_ATS__Skills__c,
+                   Contact.Years_Experience__c, AI_Match_Score__c, Sentiment_Tags__c,
+                   Full_Profile_Unlocked__c, Interest_Date__c, Status, Swipe_Event__c,
+                   Identity_Reveal_Status__c, Identity_Reveal_Requested_Date__c,
+                   Identity_Reveal_Responded_Date__c, Campaign.Employer__c, Campaign.Employer__r.Name
+            FROM CampaignMember
+            WHERE Id = :campaignMemberId
+            AND Campaign.Employer__c = :accountId
+            AND Swipe_Event__c != null
+            LIMIT 1
+        ];
+
+        if (member.Full_Profile_Unlocked__c != true) {
+            member.Identity_Reveal_Status__c = 'Requested';
+            member.Identity_Reveal_Requested_Date__c = DateTime.now();
+            update member;
+
+            NotificationService.notify(
+                member.ContactId,
+                'Message',
+                'Identity reveal request from ' + member.Campaign.Employer__r.Name,
+                member.Campaign.Employer__r.Name + ' wants to view your identity. Approve or decline this request.',
+                '/notifications?revealRequestId=' + member.Id,
+                'High'
+            );
+        }
+
+        SubscriptionService.trackFeatureUsage(accountId, 'Profile_Unlock');
+        return new CandidateWrapper(member, SubscriptionService.getSubscriptionTier(accountId), 0);
+    }
+
+    @AuraEnabled
+    public static CandidateWrapper respondIdentityReveal(Id campaignMemberId, Id candidateId, Boolean approved) {
+        CampaignMember member = [
+            SELECT Id, ContactId, Contact.FirstName, Contact.LastName, Contact.Email,
+                   Contact.Phone, Contact.MailingCity, Contact.Job_Role__c, Contact.R_ATS__Skills__c,
+                   Contact.Years_Experience__c, AI_Match_Score__c, Sentiment_Tags__c,
+                   Full_Profile_Unlocked__c, Interest_Date__c, Status, Swipe_Event__c,
+                   Identity_Reveal_Status__c, Identity_Reveal_Requested_Date__c,
+                   Identity_Reveal_Responded_Date__c
+            FROM CampaignMember
+            WHERE Id = :campaignMemberId
+            AND ContactId = :candidateId
+            AND Swipe_Event__c != null
+            LIMIT 1
+        ];
+
+        member.Identity_Reveal_Status__c = approved == true ? 'Approved' : 'Rejected';
+        member.Identity_Reveal_Responded_Date__c = DateTime.now();
+        if (approved == true) {
+            member.Full_Profile_Unlocked__c = true;
+            member.Unlocked_Date__c = DateTime.now();
+        }
+        update member;
+
+        return new CandidateWrapper(member, 'Free', 0);
     }
     
     @AuraEnabled
@@ -366,6 +432,9 @@ public with sharing class TalentPoolController {
         @AuraEnabled public Boolean isUnlocked;
         @AuraEnabled public DateTime interestDate;
         @AuraEnabled public String jobRole;
+        @AuraEnabled public String revealStatus;
+        @AuraEnabled public DateTime revealRequestedDate;
+        @AuraEnabled public DateTime revealRespondedDate;
         // Full details (only if unlocked)
         @AuraEnabled public String fullName;
         @AuraEnabled public String email;
@@ -378,6 +447,9 @@ public with sharing class TalentPoolController {
             this.sentimentTags = member.Sentiment_Tags__c;
             this.isUnlocked = member.Full_Profile_Unlocked__c;
             this.interestDate = member.Interest_Date__c;
+            this.revealStatus = member.Identity_Reveal_Status__c;
+            this.revealRequestedDate = member.Identity_Reveal_Requested_Date__c;
+            this.revealRespondedDate = member.Identity_Reveal_Responded_Date__c;
             this.location = member.Contact.MailingCity;
             this.experienceYears = member.Contact.Years_Experience__c;
             this.jobRole = member.Contact.Job_Role__c;
@@ -400,7 +472,7 @@ public with sharing class TalentPoolController {
             this.displayId = 'CANDIDATE ' + String.fromCharArray(new List<Integer>{ 65 + Math.mod(index, 26) });
             
             // Full details only if unlocked
-            if (this.isUnlocked || tier == 'Professional' || tier == 'Enterprise') {
+            if (this.isUnlocked == true) {
                 this.fullName = member.Contact.FirstName + ' ' + member.Contact.LastName;
                 this.email = member.Contact.Email;
                 this.phone = member.Contact.Phone;

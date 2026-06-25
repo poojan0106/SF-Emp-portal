@@ -36,6 +36,10 @@ global with sharing class TalentPoolRestResource {
                 getCandidatesResponse(body);
             } else if (endpoint == 'unlock-profile') {
                 unlockProfileResponse(body);
+            } else if (endpoint == 'request-identity-reveal') {
+                requestIdentityRevealResponse(body);
+            } else if (endpoint == 'respond-identity-reveal') {
+                respondIdentityRevealResponse(body);
             } else if (endpoint == 'request-interview') {
                 requestInterviewResponse(body);
             } else {
@@ -122,6 +126,51 @@ global with sharing class TalentPoolRestResource {
                 throw e;
             }
         }
+    }
+
+    /**
+     * POST /request-identity-reveal - Ask candidate to approve identity reveal
+     */
+    private static void requestIdentityRevealResponse(String body) {
+        UnlockRequest request = (UnlockRequest) JSON.deserialize(body, UnlockRequest.class);
+
+        if (String.isBlank(request.campaignMemberId) || String.isBlank(request.accountId)) {
+            sendResponse(400, 'Missing required fields');
+            return;
+        }
+
+        try {
+            TalentPoolController.CandidateWrapper candidate = TalentPoolController.requestIdentityReveal(
+                request.campaignMemberId,
+                request.accountId
+            );
+            sendResponse(200, candidate);
+        } catch (Exception e) {
+            if (e.getMessage().contains('Feature access denied')) {
+                sendResponse(403, 'Your subscription does not include this feature');
+            } else {
+                throw e;
+            }
+        }
+    }
+
+    /**
+     * POST /respond-identity-reveal - Candidate approves or rejects identity reveal
+     */
+    private static void respondIdentityRevealResponse(String body) {
+        IdentityRevealResponse request = (IdentityRevealResponse) JSON.deserialize(body, IdentityRevealResponse.class);
+
+        if (String.isBlank(request.campaignMemberId) || String.isBlank(request.candidateId) || request.approved == null) {
+            sendResponse(400, 'Missing required fields');
+            return;
+        }
+
+        TalentPoolController.CandidateWrapper candidate = TalentPoolController.respondIdentityReveal(
+            request.campaignMemberId,
+            request.candidateId,
+            request.approved
+        );
+        sendResponse(200, candidate);
     }
     
     /**
@@ -211,5 +260,11 @@ global with sharing class TalentPoolRestResource {
         global String campaignMemberId;
         global String accountId;
         global String message;
+    }
+
+    global class IdentityRevealResponse {
+        global String campaignMemberId;
+        global String candidateId;
+        global Boolean approved;
     }
 }
