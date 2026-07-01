@@ -107,55 +107,125 @@ public with sharing class TalentPoolService {
         
         if (!newCampaigns.isEmpty()) {
             insert newCampaigns;
-            System.debug('Inserted new campaigns=' + newCampaigns.size());
+            System.debug('[TalentPoolService] Inserted new campaigns=' + newCampaigns.size());
             List<Id> newCampaignIds = new List<Id>();
             for (Campaign c : newCampaigns) {
                 existingPools.put(c.Employer__c, c);
                 newCampaignIds.add(c.Id);
-                System.debug('New campaign ID: ' + c.Id + ' for employer: ' + c.Employer__c);
+                System.debug('[TalentPoolService] New campaign ID: ' + c.Id + ' for employer: ' + c.Employer__c);
             }
-            
+
             // Create required statuses for new campaigns
 	            createTalentPoolStatuses(newCampaignIds);
-            System.debug('createTalentPoolStatuses completed');
+            System.debug('[TalentPoolService] createTalentPoolStatuses completed');
         }
         
-        // Step 4: Create campaign members for MAIN pool
-        List<CampaignMember> mainPoolMembers = new List<CampaignMember>();
+        // Step 4: Check for existing campaign members and separate into new vs update
+        Set<Id> campaignIds = new Set<Id>();
+        Set<Id> candidateIds = new Set<Id>();
+
+        for (Campaign pool : existingPools.values()) {
+            campaignIds.add(pool.Id);
+        }
+
+        for (Swipe_Event__c swipe : rightSwipes) {
+            candidateIds.add(swipe.Candidate__c);
+        }
+
+        // Query existing members in these campaigns
+        Map<String, CampaignMember> existingMembers = new Map<String, CampaignMember>();
+        for (CampaignMember existing : [
+            SELECT Id, CampaignId, ContactId, Swipe_Event__c
+            FROM CampaignMember
+            WHERE CampaignId IN :campaignIds
+            AND ContactId IN :candidateIds
+        ]) {
+            String key = existing.CampaignId + '-' + existing.ContactId;
+            existingMembers.put(key, existing);
+        }
+
+        // Step 4: Create or update campaign members for MAIN pool
+        List<CampaignMember> membersToInsert = new List<CampaignMember>();
+        List<CampaignMember> membersToUpdate = new List<CampaignMember>();
         Map<Id, Id> candidateToParentCampaign = new Map<Id, Id>();
         Map<Id, Id> candidateToSwipeEvent = new Map<Id, Id>();
-        
+
         for (Swipe_Event__c swipe : rightSwipes) {
             Campaign pool = existingPools.get(swipe.Employers__c);
-            
+
+            System.debug('[TalentPoolService] Processing swipe: ' + swipe.Id + ', Candidate: ' + swipe.Candidate__c + ', Employer: ' + swipe.Employers__c);
+
             if (pool != null) {
-                CampaignMember member = new CampaignMember(
-                    CampaignId = pool.Id,
-                    ContactId = swipe.Candidate__c,
-                    Status = 'Interested',
-                    Intent_Added_Date__c = Date.today(),
-                    Intent_Source__c = 'Swipe',
-                    Swipe_Event__c = swipe.Id  
-                );
-                mainPoolMembers.add(member);
-                
+                String memberKey = pool.Id + '-' + swipe.Candidate__c;
+
+                if (existingMembers.containsKey(memberKey)) {
+                    // Update existing member with new Swipe_Event__c
+                    CampaignMember existingMember = existingMembers.get(memberKey);
+                    System.debug('[TalentPoolService] Found existing member: ' + existingMember.Id + ', updating Swipe_Event__c to ' + swipe.Id);
+                    existingMember.Swipe_Event__c = swipe.Id;
+                    membersToUpdate.add(existingMember);
+                } else {
+                    // Create new member
+                    System.debug('[TalentPoolService] Creating new CampaignMember with Swipe_Event__c = ' + swipe.Id);
+                    CampaignMember member = new CampaignMember(
+                        CampaignId = pool.Id,
+                        ContactId = swipe.Candidate__c,
+                        Status = 'Interested',
+                        Intent_Added_Date__c = Date.today(),
+                        Intent_Source__c = 'Swipe',
+                        Swipe_Event__c = swipe.Id
+                    );
+                    membersToInsert.add(member);
+                }
+
                 // Track for sub-pool creation
                 candidateToParentCampaign.put(swipe.Candidate__c, pool.Id);
                 candidateToSwipeEvent.put(swipe.Candidate__c, swipe.Id);
+            } else {
+                System.debug('[TalentPoolService] ERROR: No pool found for employer: ' + swipe.Employers__c);
             }
         }
-        
-        System.debug('Main pool members to insert=' + mainPoolMembers.size());
-        // Insert main pool members (with partial success for duplicates)
-        if (!mainPoolMembers.isEmpty()) {
-            Database.SaveResult[] mainResults = Database.insert(mainPoolMembers, false);
-            
-            // Log any errors (but continue processing)
+
+        // Insert new members
+        System.debug('[TalentPoolService] Main pool members to insert=' + membersToInsert.size());
+        if (!membersToInsert.isEmpty()) {
+            Database.SaveResult[] mainResults = Database.insert(membersToInsert, false);
+            List<CampaignMember> duplicateMembersToRepair = new List<CampaignMember>();
+            System.debug('[TalentPoolService] INSERT COMPLETE. Results size: ' + mainResults.size());
+
             for (Integer i = 0; i < mainResults.size(); i++) {
-                if (!mainResults[i].isSuccess()) {
+                if (mainResults[i].isSuccess()) {
+                    System.debug('[TalentPoolService] ✓ INSERT SUCCESS for CampaignMember ID: ' + mainResults[i].getId());
+                } else {
+                    System.debug(LoggingLevel.WARN,
+                        '[TalentPoolService] ✗ INSERT FAILED - Errors:');
                     for (Database.Error err : mainResults[i].getErrors()) {
-                        System.debug(LoggingLevel.WARN, 
-                            'Main pool member insert error: ' + err.getMessage());
+                        System.debug(LoggingLevel.WARN,
+                            '  - Code: ' + err.getStatusCode() + ', Message: ' + err.getMessage() + ', Fields: ' + err.getFields());
+                        if (err.getStatusCode() == StatusCode.DUPLICATE_VALUE) {
+                            duplicateMembersToRepair.add(membersToInsert[i]);
+                        }
+                    }
+                }
+            }
+            updateExistingMembersForDuplicateInserts(duplicateMembersToRepair);
+        }
+
+        // Update existing members
+        System.debug('[TalentPoolService] Campaign members to update=' + membersToUpdate.size());
+        if (!membersToUpdate.isEmpty()) {
+            Database.SaveResult[] updateResults = Database.update(membersToUpdate, false);
+            System.debug('[TalentPoolService] UPDATE COMPLETE. Results size: ' + updateResults.size());
+
+            for (Integer i = 0; i < updateResults.size(); i++) {
+                if (updateResults[i].isSuccess()) {
+                    System.debug('[TalentPoolService] ✓ UPDATE SUCCESS for CampaignMember ID: ' + updateResults[i].getId());
+                } else {
+                    System.debug(LoggingLevel.WARN,
+                        '[TalentPoolService] ✗ UPDATE FAILED - Errors:');
+                    for (Database.Error err : updateResults[i].getErrors()) {
+                        System.debug(LoggingLevel.WARN,
+                            '  - Code: ' + err.getStatusCode() + ', Message: ' + err.getMessage() + ', Fields: ' + err.getFields());
                     }
                 }
             }
@@ -200,6 +270,46 @@ public with sharing class TalentPoolService {
  * 
  * @param campaignIds List of Campaign IDs to create statuses for
  */
+    private static void updateExistingMembersForDuplicateInserts(List<CampaignMember> duplicateMembers) {
+        if (duplicateMembers == null || duplicateMembers.isEmpty()) return;
+
+        Set<Id> campaignIds = new Set<Id>();
+        Set<Id> contactIds = new Set<Id>();
+        Map<String, Id> swipeByMemberKey = new Map<String, Id>();
+
+        for (CampaignMember duplicateMember : duplicateMembers) {
+            if (duplicateMember.CampaignId == null || duplicateMember.ContactId == null || duplicateMember.Swipe_Event__c == null) {
+                continue;
+            }
+
+            campaignIds.add(duplicateMember.CampaignId);
+            contactIds.add(duplicateMember.ContactId);
+            swipeByMemberKey.put(duplicateMember.CampaignId + '-' + duplicateMember.ContactId, duplicateMember.Swipe_Event__c);
+        }
+
+        if (campaignIds.isEmpty() || contactIds.isEmpty()) return;
+
+        List<CampaignMember> membersToRepair = new List<CampaignMember>();
+        for (CampaignMember existingMember : [
+            SELECT Id, CampaignId, ContactId, Swipe_Event__c
+            FROM CampaignMember
+            WHERE CampaignId IN :campaignIds
+            AND ContactId IN :contactIds
+        ]) {
+            String memberKey = existingMember.CampaignId + '-' + existingMember.ContactId;
+            Id swipeEventId = swipeByMemberKey.get(memberKey);
+            if (swipeEventId != null && existingMember.Swipe_Event__c != swipeEventId) {
+                existingMember.Swipe_Event__c = swipeEventId;
+                membersToRepair.add(existingMember);
+            }
+        }
+
+        if (!membersToRepair.isEmpty()) {
+            Database.update(membersToRepair, false);
+            System.debug('[TalentPoolService] Updated duplicate existing CampaignMembers with Swipe_Event__c=' + membersToRepair.size());
+        }
+    }
+
 public static void createTalentPoolStatuses(List<Id> campaignIds) {
     if (campaignIds == null || campaignIds.isEmpty()) return;
     

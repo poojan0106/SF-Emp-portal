@@ -39,7 +39,8 @@ public class SwipeEventHandlers {
                 Status = 'Interested',
                 Interest_Source__c = 'Swipe',
                 Interest_Date__c = DateTime.now(),
-                Sentiment_Tags__c = swipe.Sentiment_Tags__c
+                Sentiment_Tags__c = swipe.Sentiment_Tags__c,
+                Swipe_Event__c = swipe.Id
             );
             newMembers.add(member);
             
@@ -48,11 +49,19 @@ public class SwipeEventHandlers {
         }
         
         Database.SaveResult[] results = Database.insert(newMembers, false);
-        
+
         for (Integer i = 0; i < results.size(); i++) {
             if (results[i].isSuccess()) {
                 swipesToUpdate[i].Campaign_Member__c = results[i].getId();
+                System.debug('[CampaignMember INSERT SUCCESS] ID: ' + results[i].getId() + ', Swipe_Event__c should be set');
                 CandidateMatchingService.calculateMatchScore(results[i].getId());
+            } else {
+                System.debug('[CampaignMember INSERT ERROR] Error Details:');
+                for (Database.Error err : results[i].getErrors()) {
+                    System.debug('  - Status Code: ' + err.getStatusCode());
+                    System.debug('  - Message: ' + err.getMessage());
+                    System.debug('  - Fields: ' + err.getFields());
+                }
             }
         }
         

@@ -222,7 +222,8 @@ public with sharing class TalentPoolSegmentationService {
         
         // Create all campaign memberships
         List<CampaignMember> membersToInsert = new List<CampaignMember>();
-        Set<String> existingMemberKeys = getExistingMemberKeys(parentCampaignIds, candidateIds);
+        List<CampaignMember> membersToUpdate = new List<CampaignMember>();
+        Map<String, CampaignMember> existingMembers = getExistingMembers(parentCampaignIds, candidateIds);
         
         for (MembershipInfo info : membershipData) {
             Set<String> segments = candidateSegments.get(info.candidateId);
@@ -234,16 +235,28 @@ public with sharing class TalentPoolSegmentationService {
                 if (subPool != null) {
                     // Check for duplicate
                     String memberKey = subPool.Id + '_' + info.candidateId;
-                    if (!existingMemberKeys.contains(memberKey)) {
+                    if (!existingMembers.containsKey(memberKey)) {
                         CampaignMember member = new CampaignMember(
                             CampaignId = subPool.Id,
                             ContactId = info.candidateId,
                             Status = 'Interested',
                             Intent_Added_Date__c = Date.today(),
-                            Intent_Source__c = 'Swipe'
+                            Intent_Source__c = 'Swipe',
+                            Swipe_Event__c = info.swipeEventId
                         );
                         membersToInsert.add(member);
-                        existingMemberKeys.add(memberKey); // Prevent duplicates in same batch
+                        existingMembers.put(memberKey, member); // Prevent duplicates in same batch
+                    } else if (
+                        info.swipeEventId != null &&
+                        existingMembers.get(memberKey).Id != null &&
+                        existingMembers.get(memberKey).Swipe_Event__c != info.swipeEventId
+                    ) {
+                        membersToUpdate.add(new CampaignMember(
+                            Id = existingMembers.get(memberKey).Id,
+                            Swipe_Event__c = info.swipeEventId,
+                            Intent_Source__c = 'Swipe',
+                            Intent_Added_Date__c = Date.today()
+                        ));
                     }
                 }
             }
@@ -252,6 +265,9 @@ public with sharing class TalentPoolSegmentationService {
         // Insert with partial success
         if (!membersToInsert.isEmpty()) {
             Database.insert(membersToInsert, false);
+        }
+        if (!membersToUpdate.isEmpty()) {
+            Database.update(membersToUpdate, false);
         }
     }
     
@@ -641,46 +657,57 @@ public with sharing class TalentPoolSegmentationService {
             subPoolIds.add(c.Id);
         }
         
-        Set<Id> existingPoolIds = new Set<Id>();
+        Map<Id, CampaignMember> existingByPoolId = new Map<Id, CampaignMember>();
         for (CampaignMember existing : [
-            SELECT CampaignId 
+            SELECT Id, CampaignId, Swipe_Event__c
             FROM CampaignMember 
             WHERE CampaignId IN :subPoolIds 
             AND ContactId = :candidateId
         ]) {
-            existingPoolIds.add(existing.CampaignId);
+            existingByPoolId.put(existing.CampaignId, existing);
         }
         
         // Create new memberships
         List<CampaignMember> newMembers = new List<CampaignMember>();
+        List<CampaignMember> membersToUpdate = new List<CampaignMember>();
         
         for (Campaign subPool : subPools) {
-            if (!existingPoolIds.contains(subPool.Id)) {
+            if (!existingByPoolId.containsKey(subPool.Id)) {
                 CampaignMember member = new CampaignMember(
                     CampaignId = subPool.Id,
                     ContactId = candidateId,
                     Status = 'Interested',
                     Intent_Added_Date__c = Date.today(),
-                    Intent_Source__c = 'Swipe'
+                    Intent_Source__c = 'Swipe',
+                    Swipe_Event__c = swipeEventId
                 );
-                
-                // Link to swipe event if field exists
-                // member.Swipe_Event__c = swipeEventId;
-                
                 newMembers.add(member);
+            } else if (
+                swipeEventId != null &&
+                existingByPoolId.get(subPool.Id).Swipe_Event__c != swipeEventId
+            ) {
+                membersToUpdate.add(new CampaignMember(
+                    Id = existingByPoolId.get(subPool.Id).Id,
+                    Swipe_Event__c = swipeEventId,
+                    Intent_Source__c = 'Swipe',
+                    Intent_Added_Date__c = Date.today()
+                ));
             }
         }
         
         if (!newMembers.isEmpty()) {
             Database.insert(newMembers, false);
         }
+        if (!membersToUpdate.isEmpty()) {
+            Database.update(membersToUpdate, false);
+        }
     }
     
     /**
-     * Gets existing campaign member keys to prevent duplicates.
+     * Gets existing campaign members to prevent duplicates and repair swipe links.
      */
-    private static Set<String> getExistingMemberKeys(Set<Id> campaignIds, Set<Id> contactIds) {
-        Set<String> keys = new Set<String>();
+    private static Map<String, CampaignMember> getExistingMembers(Set<Id> campaignIds, Set<Id> contactIds) {
+        Map<String, CampaignMember> membersByKey = new Map<String, CampaignMember>();
         
         // Get all sub-pool IDs
         Set<Id> allPoolIds = new Set<Id>(campaignIds);
@@ -690,15 +717,15 @@ public with sharing class TalentPoolSegmentationService {
         
         // Query existing members
         for (CampaignMember m : [
-            SELECT CampaignId, ContactId 
+            SELECT Id, CampaignId, ContactId, Swipe_Event__c
             FROM CampaignMember 
             WHERE CampaignId IN :allPoolIds 
             AND ContactId IN :contactIds
         ]) {
-            keys.add(m.CampaignId + '_' + m.ContactId);
+            membersByKey.put(m.CampaignId + '_' + m.ContactId, m);
         }
         
-        return keys;
+        return membersByKey;
     }
     
     // ═══════════════════════════════════════════════════════════════════════
