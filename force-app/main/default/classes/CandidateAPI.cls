@@ -125,7 +125,8 @@ global class CandidateAPI {
             'Contact.Anonymized_Name__c, Contact.Job_Role__c, Contact.Status__c, ' +
             'Contact.Interest_Notes__c, Contact.Short_Term_Goals__c, Contact.Long_Term_Goals__c, ' +
             'Contact.Expected_Salary__c, Contact.Work_Preference__c, Contact.Candidate_Sentiment__c, ' +
-            'Contact.Availability__c, Contact.Skill_Ratings__c, AI_Match_Score__c, CampaignId ' +
+            'Contact.Availability__c, Contact.Skill_Ratings__c, AI_Match_Score__c, CampaignId, ' +
+            'Full_Profile_Unlocked__c, Identity_Reveal_Status__c ' +
             'FROM CampaignMember WHERE Campaign.Employer__c = :accountId AND Status != \'Expired\'';
         
         // Add talent pool filter
@@ -230,7 +231,8 @@ global class CandidateAPI {
                     Contact.Anonymized_Name__c, Contact.Job_Role__c, Contact.Status__c,
                     Contact.Interest_Notes__c, Contact.Short_Term_Goals__c, Contact.Long_Term_Goals__c,
                     Contact.Expected_Salary__c, Contact.Work_Preference__c, Contact.Candidate_Sentiment__c,
-                    Contact.Availability__c, Contact.Skill_Ratings__c, AI_Match_Score__c
+                    Contact.Availability__c, Contact.Skill_Ratings__c, AI_Match_Score__c,
+                    Full_Profile_Unlocked__c, Identity_Reveal_Status__c
                 FROM CampaignMember
                 WHERE Id = :candidateId AND Campaign.Employer__c = :accountId
                 LIMIT 1
@@ -520,6 +522,7 @@ global class CandidateAPI {
                 WHERE Id = :accountId
                 LIMIT 1
             ];
+            Id jobOpportunityId = resolveJobOpportunityId(accountId, interviewReq);
 
             List<Task> interviewTasks = new List<Task>();
             
@@ -569,6 +572,8 @@ global class CandidateAPI {
             // Process results
             List<InterviewTaskResult> taskResults = new List<InterviewTaskResult>();
             List<NotificationService.NotificationRequest> notificationRequests = new List<NotificationService.NotificationRequest>();
+            List<Interview__c> interviewRecords = new List<Interview__c>();
+            List<Rescue_Opportunity__c> rescueOpportunities = new List<Rescue_Opportunity__c>();
             Integer successCount = 0;
             Integer failureCount = 0;
             
@@ -596,6 +601,25 @@ global class CandidateAPI {
                     notificationRequest.linkTo = '/dashboard';
                     notificationRequest.priority = 'Urgent';
                     notificationRequests.add(notificationRequest);
+                    interviewRecords.add(new Interview__c(
+                        Candidate__c = member.ContactId,
+                        Job_Opportunity__c = jobOpportunityId,
+                        Interview_Date__c = DateTime.newInstance(Date.today().addDays(3), Time.newInstance(9, 0, 0, 0)),
+                        Interview_Type__c = normalizeInterviewRecordType(interviewReq.interviewFormat),
+                        Interview_Status__c = 'Scheduled',
+                        Interviewer__c = UserInfo.getUserId(),
+                        Interviewer_Notes__c = buildRescuePrepNotes(interviewReq),
+                        Next_Steps__c = 'Candidate should review and confirm interview invitation.'
+                    ));
+                    rescueOpportunities.add(new Rescue_Opportunity__c(
+                        Account__c = accountId,
+                        Contact__c = member.ContactId,
+                        CampaignMember_Id__c = member.Id,
+                        Interview_Date__c = DateTime.newInstance(Date.today().addDays(3), Time.newInstance(9, 0, 0, 0)),
+                        Interview_Type__c = normalizeRescueInterviewType(interviewReq.interviewFormat),
+                        Status__c = 'Scheduled',
+                        Blakeney_Prep_Notes__c = buildRescuePrepNotes(interviewReq)
+                    ));
                     System.debug('✓ Task created for candidate: ' + member.Contact.Name);
                 } else {
                     result.taskId = null;
@@ -609,6 +633,12 @@ global class CandidateAPI {
             }
             
             NotificationService.notifyMany(notificationRequests);
+            if (!interviewRecords.isEmpty()) {
+                Database.insert(interviewRecords, false);
+            }
+            if (!rescueOpportunities.isEmpty()) {
+                Database.insert(rescueOpportunities, false);
+            }
 
             System.debug('Success: ' + successCount + ', Failures: ' + failureCount);
             
@@ -634,6 +664,89 @@ global class CandidateAPI {
                 new ErrorResponse('Error creating interview requests: ' + e.getMessage())
             ));
         }
+    }
+
+    private static String normalizeRescueInterviewType(String interviewFormat) {
+        if (String.isBlank(interviewFormat)) {
+            return 'Video';
+        }
+
+        String format = interviewFormat.toLowerCase();
+        if (format.contains('phone')) {
+            return 'Phone';
+        }
+        if (format.contains('person')) {
+            return 'In-person';
+        }
+        return 'Video';
+    }
+
+    private static String normalizeInterviewRecordType(String interviewFormat) {
+        if (String.isBlank(interviewFormat)) {
+            return 'Video Call';
+        }
+
+        String format = interviewFormat.toLowerCase();
+        if (format.contains('phone')) {
+            return 'Phone Screen';
+        }
+        if (format.contains('person')) {
+            return 'In-Person';
+        }
+        if (format.contains('panel')) {
+            return 'Panel';
+        }
+        if (format.contains('final')) {
+            return 'Final Round';
+        }
+        return 'Video Call';
+    }
+
+    private static Id resolveJobOpportunityId(Id accountId, InterviewRequest interviewReq) {
+        if (interviewReq != null && String.isNotBlank(interviewReq.jobOpportunityId)) {
+            return (Id) interviewReq.jobOpportunityId;
+        }
+
+        if (String.isBlank(interviewReq?.position)) {
+            return null;
+        }
+
+        List<JobOpportunity__c> jobs = [
+            SELECT Id
+            FROM JobOpportunity__c
+            WHERE Employer__c = :accountId
+            AND Name = :interviewReq.position
+            ORDER BY CreatedDate DESC
+            LIMIT 1
+        ];
+        if (!jobs.isEmpty()) {
+            return jobs[0].Id;
+        }
+
+        JobOpportunity__c job = new JobOpportunity__c(
+            Name = interviewReq.position,
+            Employer__c = accountId,
+            Status__c = 'active',
+            Is_Active__c = true,
+            Posted_Date__c = Date.today()
+        );
+        insert job;
+        return job.Id;
+    }
+
+    private static String buildRescuePrepNotes(InterviewRequest interviewReq) {
+        List<String> notes = new List<String>();
+        if (String.isNotBlank(interviewReq.position)) {
+            notes.add('Position: ' + interviewReq.position);
+        }
+        if (String.isNotBlank(interviewReq.interviewRound)) {
+            notes.add('Round: ' + interviewReq.interviewRound);
+        }
+        if (String.isNotBlank(interviewReq.duration)) {
+            notes.add('Duration: ' + interviewReq.duration);
+        }
+        notes.add('Prepare your project examples and questions for the employer.');
+        return String.join(notes, '\n');
     }
     
      /**
@@ -1674,10 +1787,13 @@ global class CandidateAPI {
         CandidateDTO dto = new CandidateDTO();
         
         dto.id = member.Id;
-        dto.realName = contact.Name;
         dto.anonymizedName = String.isNotBlank(contact.Anonymized_Name__c) 
             ? contact.Anonymized_Name__c 
             : 'Candidate ' + String.valueOf(member.Id).substring(0, 5);
+        dto.identityRevealStatus = member.Identity_Reveal_Status__c;
+        dto.isIdentityRevealed = member.Full_Profile_Unlocked__c == true
+            && member.Identity_Reveal_Status__c == 'Approved';
+        dto.realName = dto.isIdentityRevealed ? contact.Name : dto.anonymizedName;
         dto.role = contact.Job_Role__c;
         dto.matchScore = member.AI_Match_Score__c != null 
             ? Integer.valueOf(member.AI_Match_Score__c) 
@@ -1943,6 +2059,8 @@ global class CandidateAPI {
         public String id;
         public String realName;
         public String anonymizedName;
+        public Boolean isIdentityRevealed;
+        public String identityRevealStatus;
         public String role;
         public Integer matchScore;
         public Decimal matchStars;
@@ -2174,6 +2292,7 @@ global class CandidateAPI {
         public String interviewRound;        // Optional: First Round, Technical, etc.
         public String duration;              // Optional: 30 min, 60 min, etc.
         public String message;               // Optional: Additional message for candidate
+        public String jobOpportunityId;       // Optional: JobOpportunity__c ID
     }
     
      /**

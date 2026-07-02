@@ -163,7 +163,7 @@ public with sharing class TalentPoolController {
     public static CandidateWrapper requestIdentityReveal(Id campaignMemberId, Id accountId) {
         SubscriptionService.validateFeatureAccess(accountId, 'Profile_Unlock');
 
-        CampaignMember member = [
+        List<CampaignMember> members = [
             SELECT Id, ContactId, Contact.FirstName, Contact.LastName, Contact.Email,
                    Contact.Phone, Contact.MailingCity, Contact.Job_Role__c, Contact.R_ATS__Skills__c,
                    Contact.Years_Experience__c, AI_Match_Score__c, Sentiment_Tags__c,
@@ -173,23 +173,40 @@ public with sharing class TalentPoolController {
             FROM CampaignMember
             WHERE Id = :campaignMemberId
             AND Campaign.Employer__c = :accountId
-            AND Swipe_Event__c != null
             LIMIT 1
         ];
 
-        if (member.Full_Profile_Unlocked__c != true) {
+        if (members.isEmpty()) {
+            throw new AuraHandledException('Candidate is not in this employer talent pool');
+        }
+
+        CampaignMember member = members[0];
+
+        if (member.Identity_Reveal_Status__c != 'Approved') {
             member.Identity_Reveal_Status__c = 'Requested';
             member.Identity_Reveal_Requested_Date__c = DateTime.now();
+            member.Full_Profile_Unlocked__c = false;
+            member.Unlocked_Date__c = null;
             update member;
 
-            NotificationService.notify(
-                member.ContactId,
-                'Message',
-                'Identity reveal request from ' + member.Campaign.Employer__r.Name,
-                member.Campaign.Employer__r.Name + ' wants to view your identity. Approve or decline this request.',
-                '/notifications?revealRequestId=' + member.Id,
-                'High'
-            );
+            try {
+                ensureRevealRequest(member);
+            } catch (Exception e) {
+                System.debug(LoggingLevel.ERROR, 'Unable to create reveal request: ' + e.getMessage());
+            }
+
+            try {
+                NotificationService.notify(
+                    member.ContactId,
+                    'Message',
+                    'Identity reveal request from ' + member.Campaign.Employer__r.Name,
+                    member.Campaign.Employer__r.Name + ' wants to view your identity. Approve or decline this request.',
+                    '/notifications?revealRequestId=' + member.Id,
+                    'High'
+                );
+            } catch (Exception e) {
+                System.debug(LoggingLevel.ERROR, 'Unable to create identity reveal notification: ' + e.getMessage());
+            }
         }
 
         SubscriptionService.trackFeatureUsage(accountId, 'Profile_Unlock');
@@ -198,7 +215,7 @@ public with sharing class TalentPoolController {
 
     @AuraEnabled
     public static CandidateWrapper respondIdentityReveal(Id campaignMemberId, Id candidateId, Boolean approved) {
-        CampaignMember member = [
+        List<CampaignMember> members = [
             SELECT Id, ContactId, Contact.FirstName, Contact.LastName, Contact.Email,
                    Contact.Phone, Contact.MailingCity, Contact.Job_Role__c, Contact.R_ATS__Skills__c,
                    Contact.Years_Experience__c, AI_Match_Score__c, Sentiment_Tags__c,
@@ -208,19 +225,74 @@ public with sharing class TalentPoolController {
             FROM CampaignMember
             WHERE Id = :campaignMemberId
             AND ContactId = :candidateId
-            AND Swipe_Event__c != null
             LIMIT 1
         ];
+
+        if (members.isEmpty()) {
+            throw new AuraHandledException('Identity reveal request does not belong to this candidate');
+        }
+
+        CampaignMember member = members[0];
 
         member.Identity_Reveal_Status__c = approved == true ? 'Approved' : 'Rejected';
         member.Identity_Reveal_Responded_Date__c = DateTime.now();
         if (approved == true) {
             member.Full_Profile_Unlocked__c = true;
             member.Unlocked_Date__c = DateTime.now();
+        } else {
+            member.Full_Profile_Unlocked__c = false;
+            member.Unlocked_Date__c = null;
         }
         update member;
 
+        syncRevealRequestDecision(member.Id, approved == true);
+
         return new CandidateWrapper(member, 'Free', 0);
+    }
+
+    private static void ensureRevealRequest(CampaignMember member) {
+        String campaignMemberId = String.valueOf(member.Id);
+        List<Reveal_Request__c> existing = [
+            SELECT Id
+            FROM Reveal_Request__c
+            WHERE CampaignMember_Id__c = :campaignMemberId
+            AND Status__c = 'Pending'
+            LIMIT 1
+        ];
+
+        if (!existing.isEmpty()) {
+            return;
+        }
+
+        insert new Reveal_Request__c(
+            Employer__c = member.Campaign.Employer__c,
+            Candidate__c = member.ContactId,
+            CampaignMember_Id__c = campaignMemberId,
+            Request_Date__c = DateTime.now(),
+            Status__c = 'Pending',
+            Reason__c = member.Campaign.Employer__r.Name + ' wants to know who you are to schedule an interview.'
+        );
+    }
+
+    private static void syncRevealRequestDecision(Id campaignMemberId, Boolean approved) {
+        String campaignMemberKey = String.valueOf(campaignMemberId);
+        List<Reveal_Request__c> requests = [
+            SELECT Id, Status__c, Decision_Date__c
+            FROM Reveal_Request__c
+            WHERE CampaignMember_Id__c = :campaignMemberKey
+            AND Status__c = 'Pending'
+            ORDER BY Request_Date__c DESC
+            LIMIT 1
+        ];
+
+        if (requests.isEmpty()) {
+            return;
+        }
+
+        Reveal_Request__c request = requests[0];
+        request.Status__c = approved ? 'Approved' : 'Declined';
+        request.Decision_Date__c = DateTime.now();
+        update request;
     }
     
     @AuraEnabled
@@ -445,7 +517,8 @@ public with sharing class TalentPoolController {
             this.contactId = member.ContactId;
             this.matchScore = member.AI_Match_Score__c != null ? member.AI_Match_Score__c.intValue() : 0;
             this.sentimentTags = member.Sentiment_Tags__c;
-            this.isUnlocked = member.Full_Profile_Unlocked__c;
+            this.isUnlocked = member.Full_Profile_Unlocked__c == true
+                && member.Identity_Reveal_Status__c == 'Approved';
             this.interestDate = member.Interest_Date__c;
             this.revealStatus = member.Identity_Reveal_Status__c;
             this.revealRequestedDate = member.Identity_Reveal_Requested_Date__c;
