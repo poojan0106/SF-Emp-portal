@@ -499,7 +499,7 @@ global class CandidateAPI {
             
             // ✅ BULK QUERY: Get ALL candidates in one query
             List<CampaignMember> campaignMembers = [
-                SELECT Id, ContactId, Contact.Id, Contact.Name, Contact.Email
+                SELECT Id, ContactId, Status, Contact.Id, Contact.Name, Contact.Email
                 FROM CampaignMember
                 WHERE Id IN :interviewReq.candidateIds 
                 AND Campaign.Employer__c = :accountId
@@ -574,6 +574,7 @@ global class CandidateAPI {
             List<NotificationService.NotificationRequest> notificationRequests = new List<NotificationService.NotificationRequest>();
             List<Interview__c> interviewRecords = new List<Interview__c>();
             List<Rescue_Opportunity__c> rescueOpportunities = new List<Rescue_Opportunity__c>();
+            List<CampaignMember> campaignMembersToUpdate = new List<CampaignMember>();
             Integer successCount = 0;
             Integer failureCount = 0;
             
@@ -620,6 +621,12 @@ global class CandidateAPI {
                         Status__c = 'Scheduled',
                         Blakeney_Prep_Notes__c = buildRescuePrepNotes(interviewReq)
                     ));
+                    campaignMembersToUpdate.add(new CampaignMember(
+                        Id = member.Id,
+                        Status = 'Interview_Scheduled',
+                        Interview_Requested__c = true,
+                        Interview_Request_Date__c = DateTime.now()
+                    ));
                     System.debug('✓ Task created for candidate: ' + member.Contact.Name);
                 } else {
                     result.taskId = null;
@@ -638,6 +645,9 @@ global class CandidateAPI {
             }
             if (!rescueOpportunities.isEmpty()) {
                 Database.insert(rescueOpportunities, false);
+            }
+            if (!campaignMembersToUpdate.isEmpty()) {
+                Database.update(campaignMembersToUpdate, false);
             }
 
             System.debug('Success: ' + successCount + ', Failures: ' + failureCount);

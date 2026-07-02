@@ -221,7 +221,7 @@ public with sharing class TalentPoolController {
                    Contact.Years_Experience__c, AI_Match_Score__c, Sentiment_Tags__c,
                    Full_Profile_Unlocked__c, Interest_Date__c, Status, Swipe_Event__c,
                    Identity_Reveal_Status__c, Identity_Reveal_Requested_Date__c,
-                   Identity_Reveal_Responded_Date__c
+                   Identity_Reveal_Responded_Date__c, Campaign.Employer__c, Campaign.Employer__r.Name
             FROM CampaignMember
             WHERE Id = :campaignMemberId
             AND ContactId = :candidateId
@@ -246,6 +246,8 @@ public with sharing class TalentPoolController {
         update member;
 
         syncRevealRequestDecision(member.Id, approved == true);
+        notifyEmployerRevealDecision(member, approved == true);
+        upsertProtectionMetric(member.ContactId);
 
         return new CandidateWrapper(member, 'Free', 0);
     }
@@ -293,6 +295,67 @@ public with sharing class TalentPoolController {
         request.Status__c = approved ? 'Approved' : 'Declined';
         request.Decision_Date__c = DateTime.now();
         update request;
+    }
+
+    private static void notifyEmployerRevealDecision(CampaignMember member, Boolean approved) {
+        if (member.Campaign == null || member.Campaign.Employer__c == null) return;
+        List<Contact> employerUsers = [
+            SELECT Email, FirstName
+            FROM Contact
+            WHERE AccountId = :member.Campaign.Employer__c
+            AND Email != null
+            LIMIT 5
+        ];
+        if (employerUsers.isEmpty()) return;
+
+        List<Messaging.SingleEmailMessage> emails = new List<Messaging.SingleEmailMessage>();
+        for (Contact employerUser : employerUsers) {
+            Messaging.SingleEmailMessage email = new Messaging.SingleEmailMessage();
+            email.setToAddresses(new List<String>{ employerUser.Email });
+            email.setSubject(approved ? 'Identity reveal approved' : 'Identity reveal declined');
+            email.setPlainTextBody(
+                approved
+                    ? 'Candidate approved your identity reveal request. You can continue interview scheduling.'
+                    : 'Candidate declined your identity reveal request. Their identity remains masked.'
+            );
+            emails.add(email);
+        }
+        Messaging.sendEmail(emails, false);
+    }
+
+    private static void upsertProtectionMetric(Id candidateId) {
+        List<CampaignMember> members = [
+            SELECT Id, Identity_Reveal_Status__c, Full_Profile_Unlocked__c
+            FROM CampaignMember
+            WHERE ContactId = :candidateId
+            AND Campaign.Is_Talent_Pool__c = true
+        ];
+        Integer requests = 0;
+        Integer approved = 0;
+        Integer declined = 0;
+        Integer masked = 0;
+        for (CampaignMember member : members) {
+            if (member.Identity_Reveal_Status__c != null) requests++;
+            if (member.Identity_Reveal_Status__c == 'Approved') approved++;
+            if (member.Identity_Reveal_Status__c == 'Rejected') declined++;
+            if (member.Full_Profile_Unlocked__c != true) masked++;
+        }
+
+        List<Protection_Metric__c> existing = [
+            SELECT Id
+            FROM Protection_Metric__c
+            WHERE Candidate__c = :candidateId
+            LIMIT 1
+        ];
+        Protection_Metric__c metric = existing.isEmpty()
+            ? new Protection_Metric__c(Candidate__c = candidateId)
+            : existing[0];
+        metric.Masked_Profiles_Shared__c = masked;
+        metric.Reveal_Requests_Received__c = requests;
+        metric.Reveals_Approved__c = approved;
+        metric.Reveals_Declined__c = declined;
+        metric.Last_Updated__c = DateTime.now();
+        upsert metric;
     }
     
     @AuraEnabled
