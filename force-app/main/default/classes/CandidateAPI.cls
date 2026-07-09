@@ -551,9 +551,56 @@ global class CandidateAPI {
                 InterviewTaskResult result = new InterviewTaskResult();
                 result.candidateId = member.Id;
                 result.candidateName = member.Contact.Name;
+<<<<<<< HEAD
                 String duplicateKey = String.valueOf(member.ContactId) + '|' + String.valueOf(interviewStart);
                 if (duplicateInterviewKeys.contains(duplicateKey)) {
                     result.success = false;
+=======
+                result.success = sr.isSuccess();
+                
+                if (sr.isSuccess()) {
+                    result.taskId = sr.getId();
+                    result.message = 'Interview task created successfully';
+                    successCount++;
+
+                    NotificationService.NotificationRequest notificationRequest =
+                        new NotificationService.NotificationRequest();
+                    notificationRequest.recipientId = member.ContactId;
+                    notificationRequest.notificationType = 'Interview';
+                    notificationRequest.title = 'Interview invitation from ' + employerAccount.Name;
+                    notificationRequest.description = 'You have been invited to interview for ' +
+                        interviewReq.position + '. Review and confirm.';
+                    notificationRequest.linkTo = '/dashboard';
+                    notificationRequest.priority = 'Urgent';
+                    notificationRequests.add(notificationRequest);
+                    interviewRecords.add(new Interview__c(
+                        Candidate__c = member.ContactId,
+                        Job_Opportunity__c = jobOpportunityId,
+                        Interview_Date__c = DateTime.newInstance(Date.today().addDays(3), Time.newInstance(9, 0, 0, 0)),
+                        Interview_Type__c = normalizeInterviewRecordType(interviewReq.interviewFormat),
+                        Interview_Status__c = 'Scheduled',
+                        Interviewer__c = UserInfo.getUserId(),
+                        Interviewer_Notes__c = buildRescuePrepNotes(interviewReq),
+                        Next_Steps__c = 'Candidate should review and confirm interview invitation.'
+                    ));
+                    rescueOpportunities.add(new Rescue_Opportunity__c(
+                        Account__c = accountId,
+                        Contact__c = member.ContactId,
+                        CampaignMember_Id__c = member.Id,
+                        Interview_Date__c = DateTime.newInstance(Date.today().addDays(3), Time.newInstance(9, 0, 0, 0)),
+                        Interview_Type__c = normalizeRescueInterviewType(interviewReq.interviewFormat),
+                        Status__c = 'Scheduled',
+                        Blakeney_Prep_Notes__c = buildRescuePrepNotes(interviewReq)
+                    ));
+                    campaignMembersToUpdate.add(new CampaignMember(
+                        Id = member.Id,
+                        Status = 'Interview_Scheduled',
+                        Interview_Requested__c = true,
+                        Interview_Request_Date__c = DateTime.now()
+                    ));
+                    System.debug('✓ Task created for candidate: ' + member.Contact.Name);
+                } else {
+>>>>>>> c9a13e6060dc3ee5dd8d97c6961064c024efcaff
                     result.taskId = null;
                     result.message = 'Interview already exists for this candidate at the selected date/time';
                     failureCount++;
