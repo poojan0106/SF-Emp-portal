@@ -258,7 +258,6 @@ public with sharing class TalentPoolController {
         } catch (Exception e) {
             System.debug(LoggingLevel.ERROR, 'Unable to send identity reveal decision email: ' + e.getMessage());
         }
-
         upsertProtectionMetric(member.ContactId);
 
         return new CandidateWrapper(member, 'Free', 0);

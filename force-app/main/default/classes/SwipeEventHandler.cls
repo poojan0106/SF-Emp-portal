@@ -47,7 +47,7 @@ public with sharing class SwipeEventHandler {
         // Add right-swiped candidates to employer talent pools
         // This integrates with US-045: Automated Talent Pool Formation
         if (!rightSwipes.isEmpty()) {
-            TalentPoolService.x(rightSwipes);
+            TalentPoolService.addCandidatesToPools(rightSwipes);
         }
     }
     

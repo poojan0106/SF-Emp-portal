@@ -7,7 +7,8 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
     
     private static final String CLAUDE_MODEL = 'claude-sonnet-4-20250514';
     private static final String CLAUDE_ENDPOINT = 'https://api.anthropic.com/v1/messages';
-    private static final String CLAUDE_API_KEY = System.Label.Claude_API_Key;
+    private static final String DEFAULT_AWS_BUCKET_NAME = 'resonanttest2021';
+    private static final String DEFAULT_AWS_HOST = 's3.us-west-2.amazonaws.com';
     
     global Messaging.InboundEmailResult handleInboundEmail(
         Messaging.InboundEmail email, 
@@ -186,10 +187,11 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
         
         fileName = fileNameFormate+'-'+formatted_DateTime+'.'+fileExtensionName;
         
-            String key = System.Label.AWS_Access_Key_Id;
-            String secret = System.Label.AWS_Secret_Access_Key;
-            String bucketname = System.Label.AWS_S3_Bucket_Name;
-            String host = System.Label.AWS_S3_Host;
+            AwsSettings awsSettings = getAwsSettings();
+            String key = awsSettings.accessKey;
+            String secret = awsSettings.secretKey;
+            String bucketname = awsSettings.bucketName;
+            String host = awsSettings.host;
             
             String formattedDateString = Datetime.now().formatGMT('EEE, dd MMM yyyy HH:mm:ss z');
             
@@ -262,11 +264,12 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
  	public static string ConvertIntoPdf(String fileName){
         try{
             
-            String AccessKey = System.Label.AWS_Access_Key_Id;
-            String SecretKey = System.Label.AWS_Secret_Access_Key;
-            String BucketName = System.Label.AWS_S3_Bucket_Name;
-            String locationname = System.Label.AWS_S3_Host;
-            string EndPoint = System.Label.Resume_File_Converter_Endpoint;
+            AwsSettings awsSettings = getAwsSettings();
+            String AccessKey = awsSettings.accessKey;
+            String SecretKey = awsSettings.secretKey;
+            String BucketName = awsSettings.bucketName;
+            String locationname = awsSettings.host;
+            string EndPoint = 'https://resonant-file-converter.herokuapp.com/api/convert/docx-pdf';  //end point URL
             
             System.debug(fileName);
             // String file='KatieCV2docx29112023183850PMdocx-20-05-2024-15:59:13PM.docx';
@@ -383,7 +386,7 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
         req.setEndpoint(CLAUDE_ENDPOINT);
         req.setMethod('POST');
         req.setHeader('Content-Type', 'application/json');
-        req.setHeader('x-api-key', CLAUDE_API_KEY);
+        req.setHeader('x-api-key', getClaudeAPIKey());
         req.setHeader('anthropic-version', '2023-06-01');
         req.setTimeout(120000);
         
@@ -840,6 +843,52 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
     }
     
     // ==================== HELPER METHODS ====================
+
+    private static Blakeney_Setting__mdt getBlakeneySettings() {
+        try {
+            return [
+                SELECT Claude_API_Key__c,
+                    AWS_Access_Key__c,
+                    AWS_Secret_Key__c,
+                    AWS_Bucket_Name__c,
+                    AWS_Host__c
+                FROM Blakeney_Setting__mdt
+                WHERE DeveloperName = 'Default'
+                LIMIT 1
+            ];
+        } catch (Exception e) {
+            System.debug(LoggingLevel.ERROR, 'Failed to get Blakeney settings: ' + e.getMessage());
+            return null;
+        }
+    }
+
+    private static String getClaudeAPIKey() {
+        Blakeney_Setting__mdt settings = getBlakeneySettings();
+        if (settings != null && String.isNotBlank(settings.Claude_API_Key__c)) {
+            return settings.Claude_API_Key__c;
+        }
+        throw new ResumeParserConfigurationException('Claude API key not configured in Blakeney_Setting__mdt');
+    }
+
+    private static AwsSettings getAwsSettings() {
+        Blakeney_Setting__mdt settings = getBlakeneySettings();
+        if (settings == null ||
+            String.isBlank(settings.AWS_Access_Key__c) ||
+            String.isBlank(settings.AWS_Secret_Key__c)) {
+            throw new ResumeParserConfigurationException('AWS credentials not configured in Blakeney_Setting__mdt');
+        }
+
+        AwsSettings awsSettings = new AwsSettings();
+        awsSettings.accessKey = settings.AWS_Access_Key__c;
+        awsSettings.secretKey = settings.AWS_Secret_Key__c;
+        awsSettings.bucketName = String.isNotBlank(settings.AWS_Bucket_Name__c)
+            ? settings.AWS_Bucket_Name__c
+            : DEFAULT_AWS_BUCKET_NAME;
+        awsSettings.host = String.isNotBlank(settings.AWS_Host__c)
+            ? settings.AWS_Host__c
+            : DEFAULT_AWS_HOST;
+        return awsSettings;
+    }
     
     private String getString(Map<String, Object> maps, String key) {
         Object value = maps.get(key);
@@ -948,4 +997,13 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
         public String mimeTypeSubType;
         public Integer fileSize;
     }
+
+    public class AwsSettings {
+        public String accessKey;
+        public String secretKey;
+        public String bucketName;
+        public String host;
+    }
+
+    public class ResumeParserConfigurationException extends Exception {}
 }

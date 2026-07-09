@@ -3,6 +3,7 @@
     <fullName>Request_Date__c</fullName>
     <label>Request Date</label>
     <required>false</required>
+    <trackHistory>false</trackHistory>
     <trackTrending>false</trackTrending>
     <type>DateTime</type>
 </CustomField>

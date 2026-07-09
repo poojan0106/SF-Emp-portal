@@ -3,7 +3,7 @@
     <fullName>Recipient__c</fullName>
     <deleteConstraint>SetNull</deleteConstraint>
     <description>Candidate contact that receives the notification.</description>
-    <label>Recipient</label>
+    <label>Recipient Contact</label>
     <referenceTo>Contact</referenceTo>
     <relationshipLabel>Notifications</relationshipLabel>
     <relationshipName>Notifications</relationshipName>

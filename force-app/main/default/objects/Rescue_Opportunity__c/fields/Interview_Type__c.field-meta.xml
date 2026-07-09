@@ -9,9 +9,21 @@
         <restricted>true</restricted>
         <valueSetDefinition>
             <sorted>false</sorted>
-            <value><fullName>Phone</fullName><default>false</default><label>Phone</label></value>
-            <value><fullName>Video</fullName><default>true</default><label>Video</label></value>
-            <value><fullName>In-person</fullName><default>false</default><label>In-person</label></value>
+            <value>
+                <fullName>Phone</fullName>
+                <default>false</default>
+                <label>Phone</label>
+            </value>
+            <value>
+                <fullName>Video</fullName>
+                <default>true</default>
+                <label>Video</label>
+            </value>
+            <value>
+                <fullName>In-person</fullName>
+                <default>false</default>
+                <label>In-person</label>
+            </value>
         </valueSetDefinition>
     </valueSet>
 </CustomField>

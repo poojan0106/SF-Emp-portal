@@ -3,7 +3,6 @@
     <fullName>Identity_Reveal_Status__c</fullName>
     <label>Identity Reveal Status</label>
     <required>false</required>
-    <trackHistory>false</trackHistory>
     <type>Picklist</type>
     <valueSet>
         <restricted>true</restricted>
