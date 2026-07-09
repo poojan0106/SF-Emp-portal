@@ -551,11 +551,9 @@ global class CandidateAPI {
                 InterviewTaskResult result = new InterviewTaskResult();
                 result.candidateId = member.Id;
                 result.candidateName = member.Contact.Name;
-<<<<<<< HEAD
                 String duplicateKey = String.valueOf(member.ContactId) + '|' + String.valueOf(interviewStart);
                 if (duplicateInterviewKeys.contains(duplicateKey)) {
                     result.success = false;
-=======
                 result.success = sr.isSuccess();
                 
                 if (sr.isSuccess()) {
@@ -600,7 +598,6 @@ global class CandidateAPI {
                     ));
                     System.debug('✓ Task created for candidate: ' + member.Contact.Name);
                 } else {
->>>>>>> c9a13e6060dc3ee5dd8d97c6961064c024efcaff
                     result.taskId = null;
                     result.message = 'Interview already exists for this candidate at the selected date/time';
                     failureCount++;
