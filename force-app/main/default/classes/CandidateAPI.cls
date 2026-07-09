@@ -430,7 +430,7 @@ global class CandidateAPI {
                     Contact.Interest_Notes__c, Contact.Expected_Salary__c, Contact.Work_Preference__c,
                     Contact.Candidate_Sentiment__c, AI_Match_Score__c
                 FROM CampaignMember
-                WHERE Campaign.Employer__c = :accountId AND Status = 'Interested'
+                WHERE Campaign.Employer__c = :accountId AND Status IN ('Interested', 'In League')
                 LIMIT 50000
             ];
             
@@ -454,7 +454,7 @@ global class CandidateAPI {
     
     /**
      * Helper: Request interview for candidates
-     * Creates Task record for interview scheduling
+     * Creates Interview__c and Rescue_Opportunity__c records for interview scheduling
      */
     private static void requestInterview(Id accountId, Map<String, Object> requestMap, RestResponse res) {
         System.debug('=== requestInterview (BULKIFIED) START ===');
@@ -496,6 +496,8 @@ global class CandidateAPI {
             }
             
             System.debug('Processing ' + interviewReq.candidateIds.size() + ' candidates');
+            DateTime interviewStart = resolveInterviewStart(interviewReq);
+            DateTime interviewEnd = resolveInterviewEnd(interviewReq, interviewStart);
             
             // ✅ BULK QUERY: Get ALL candidates in one query
             List<CampaignMember> campaignMembers = [
@@ -515,7 +517,7 @@ global class CandidateAPI {
                 return;
             }
             
-            // ✅ BULK CREATE: Build all Task records
+            // Create Interview__c records only. Do not create Task records for interview scheduling.
             Account employerAccount = [
                 SELECT Name
                 FROM Account
@@ -523,53 +525,6 @@ global class CandidateAPI {
                 LIMIT 1
             ];
             Id jobOpportunityId = resolveJobOpportunityId(accountId, interviewReq);
-
-            List<Task> interviewTasks = new List<Task>();
-            
-            for (CampaignMember campaignMember : campaignMembers) {
-                Task interviewTask = new Task();
-                interviewTask.WhoId = campaignMember.Contact.Id;
-                interviewTask.WhatId = accountId;
-                interviewTask.Subject = 'Interview - ' + interviewReq.position;
-                interviewTask.ActivityDate = Date.today().addDays(3); // Default to 3 days from now
-                interviewTask.Status = 'Open';
-                interviewTask.Priority = 'High';
-                interviewTask.Type = 'Call';
-                
-                // Build description with interview details
-                String description = 'Interview Request Details\n';
-                description += '================================\n';
-                description += 'Position: ' + interviewReq.position + '\n';
-                description += 'Interview Format: ' + interviewReq.interviewFormat + '\n';
-                
-                if (String.isNotBlank(interviewReq.interviewRound)) {
-                    description += 'Interview Round: ' + interviewReq.interviewRound + '\n';
-                }
-                
-                if (String.isNotBlank(interviewReq.duration)) {
-                    description += 'Expected Duration: ' + interviewReq.duration + '\n';
-                }
-                
-                description += '\nCandidate: ' + campaignMember.Contact.Name + '\n';
-                description += 'Email: ' + (campaignMember.Contact.Email ?? 'N/A') + '\n';
-                description += '\nPlease contact the candidate to schedule the interview.';
-                
-                if (String.isNotBlank(interviewReq.message)) {
-                    description += '\n\nAdditional Notes:\n' + interviewReq.message;
-                }
-                
-                interviewTask.Description = description;
-                interviewTasks.add(interviewTask);
-            }
-            
-            System.debug('Created ' + interviewTasks.size() + ' task records');
-            
-            // ✅ BULK INSERT with partial success allowed
-            Database.SaveResult[] saveResults = Database.insert(interviewTasks, false);
-            
-            System.debug('Insert results received: ' + saveResults.size());
-            
-            // Process results
             List<InterviewTaskResult> taskResults = new List<InterviewTaskResult>();
             List<NotificationService.NotificationRequest> notificationRequests = new List<NotificationService.NotificationRequest>();
             List<Interview__c> interviewRecords = new List<Interview__c>();
@@ -577,71 +532,96 @@ global class CandidateAPI {
             List<CampaignMember> campaignMembersToUpdate = new List<CampaignMember>();
             Integer successCount = 0;
             Integer failureCount = 0;
+            Set<Id> contactIds = new Set<Id>();
+            for (CampaignMember member : campaignMembers) {
+                contactIds.add(member.ContactId);
+            }
+            Set<String> duplicateInterviewKeys = new Set<String>();
+            for (Interview__c existingInterview : [
+                SELECT Id, Candidate__c, Interview_Date__c, Interview_Status__c
+                FROM Interview__c
+                WHERE Candidate__c IN :contactIds
+                AND Interview_Date__c = :interviewStart
+                AND Interview_Status__c IN ('Scheduled', 'Confirmed', 'Reschedule Requested')
+            ]) {
+                duplicateInterviewKeys.add(String.valueOf(existingInterview.Candidate__c) + '|' + String.valueOf(existingInterview.Interview_Date__c));
+            }
             
-            for (Integer i = 0; i < saveResults.size(); i++) {
-                Database.SaveResult sr = saveResults[i];
-                CampaignMember member = campaignMembers[i];
-                
+            for (CampaignMember member : campaignMembers) {
                 InterviewTaskResult result = new InterviewTaskResult();
                 result.candidateId = member.Id;
                 result.candidateName = member.Contact.Name;
-                result.success = sr.isSuccess();
-                
-                if (sr.isSuccess()) {
-                    result.taskId = sr.getId();
-                    result.message = 'Interview task created successfully';
-                    successCount++;
-
-                    NotificationService.NotificationRequest notificationRequest =
-                        new NotificationService.NotificationRequest();
-                    notificationRequest.recipientId = member.ContactId;
-                    notificationRequest.notificationType = 'Interview';
-                    notificationRequest.title = 'Interview invitation from ' + employerAccount.Name;
-                    notificationRequest.description = 'You have been invited to interview for ' +
-                        interviewReq.position + '. Review and confirm.';
-                    notificationRequest.linkTo = '/dashboard';
-                    notificationRequest.priority = 'Urgent';
-                    notificationRequests.add(notificationRequest);
-                    interviewRecords.add(new Interview__c(
-                        Candidate__c = member.ContactId,
-                        Job_Opportunity__c = jobOpportunityId,
-                        Interview_Date__c = DateTime.newInstance(Date.today().addDays(3), Time.newInstance(9, 0, 0, 0)),
-                        Interview_Type__c = normalizeInterviewRecordType(interviewReq.interviewFormat),
-                        Interview_Status__c = 'Scheduled',
-                        Interviewer__c = UserInfo.getUserId(),
-                        Interviewer_Notes__c = buildRescuePrepNotes(interviewReq),
-                        Next_Steps__c = 'Candidate should review and confirm interview invitation.'
-                    ));
-                    rescueOpportunities.add(new Rescue_Opportunity__c(
-                        Account__c = accountId,
-                        Contact__c = member.ContactId,
-                        CampaignMember_Id__c = member.Id,
-                        Interview_Date__c = DateTime.newInstance(Date.today().addDays(3), Time.newInstance(9, 0, 0, 0)),
-                        Interview_Type__c = normalizeRescueInterviewType(interviewReq.interviewFormat),
-                        Status__c = 'Scheduled',
-                        Blakeney_Prep_Notes__c = buildRescuePrepNotes(interviewReq)
-                    ));
-                    campaignMembersToUpdate.add(new CampaignMember(
-                        Id = member.Id,
-                        Status = 'Interview_Scheduled',
-                        Interview_Requested__c = true,
-                        Interview_Request_Date__c = DateTime.now()
-                    ));
-                    System.debug('✓ Task created for candidate: ' + member.Contact.Name);
-                } else {
+                String duplicateKey = String.valueOf(member.ContactId) + '|' + String.valueOf(interviewStart);
+                if (duplicateInterviewKeys.contains(duplicateKey)) {
+                    result.success = false;
                     result.taskId = null;
-                    result.message = sr.getErrors()[0].getMessage();
+                    result.message = 'Interview already exists for this candidate at the selected date/time';
                     failureCount++;
-                    System.debug('✗ Failed for candidate: ' + member.Contact.Name + 
-                        ' | Error: ' + result.message);
+                    taskResults.add(result);
+                    continue;
                 }
-                
+
+                result.success = true;
+                result.taskId = null;
+                result.message = 'Interview created successfully';
+                successCount++;
+                duplicateInterviewKeys.add(duplicateKey);
+
+                NotificationService.NotificationRequest notificationRequest =
+                    new NotificationService.NotificationRequest();
+                notificationRequest.recipientId = member.ContactId;
+                notificationRequest.notificationType = 'Interview';
+                notificationRequest.title = 'Interview invitation from ' + employerAccount.Name;
+                notificationRequest.description = 'You have been invited to interview for ' +
+                    interviewReq.position + '. Review and confirm.';
+                notificationRequest.linkTo = '/dashboard';
+                notificationRequest.priority = 'Urgent';
+                notificationRequests.add(notificationRequest);
+
+                interviewRecords.add(new Interview__c(
+                    Candidate__c = member.ContactId,
+                    Job_Opportunity__c = jobOpportunityId,
+                    Interview_Date__c = interviewStart,
+                    Interview_End_Date__c = interviewEnd,
+                    Interview_Type__c = normalizeInterviewRecordType(interviewReq.interviewFormat),
+                    Interview_Status__c = 'Scheduled',
+                    Interview_Link__c = interviewReq.interviewLink,
+                    Interviewer__c = UserInfo.getUserId(),
+                    Interviewer_Notes__c = buildRescuePrepNotes(interviewReq),
+                    Next_Steps__c = 'Candidate should review and confirm interview invitation.'
+                ));
+                campaignMembersToUpdate.add(new CampaignMember(
+                    Id = member.Id,
+                    Interview_Requested__c = true,
+                    Interview_Request_Date__c = DateTime.now()
+                ));
                 taskResults.add(result);
             }
             
             NotificationService.notifyMany(notificationRequests);
             if (!interviewRecords.isEmpty()) {
                 Database.insert(interviewRecords, false);
+            }
+            Integer interviewIndex = 0;
+            for (Integer i = 0; i < taskResults.size(); i++) {
+                InterviewTaskResult result = taskResults[i];
+                if (result.success == true) {
+                    CampaignMember member = campaignMembers[i];
+                    Id interviewId = interviewIndex < interviewRecords.size() ? interviewRecords[interviewIndex].Id : null;
+                    result.taskId = interviewId == null ? null : String.valueOf(interviewId);
+                    rescueOpportunities.add(new Rescue_Opportunity__c(
+                        Account__c = accountId,
+                        Contact__c = member.ContactId,
+                        CampaignMember_Id__c = member.Id,
+                        Interview__c = interviewId,
+                        Interview_Date__c = interviewStart,
+                        Interview_End_Date__c = interviewEnd,
+                        Interview_Type__c = normalizeRescueInterviewType(interviewReq.interviewFormat),
+                        Status__c = 'Scheduled',
+                        Blakeney_Prep_Notes__c = buildRescuePrepNotes(interviewReq)
+                    ));
+                    interviewIndex++;
+                }
             }
             if (!rescueOpportunities.isEmpty()) {
                 Database.insert(rescueOpportunities, false);
@@ -755,8 +735,49 @@ global class CandidateAPI {
         if (String.isNotBlank(interviewReq.duration)) {
             notes.add('Duration: ' + interviewReq.duration);
         }
+        if (String.isNotBlank(interviewReq.interviewLink)) {
+            notes.add('Interview Link: ' + interviewReq.interviewLink);
+        }
         notes.add('Prepare your project examples and questions for the employer.');
         return String.join(notes, '\n');
+    }
+
+    private static DateTime resolveInterviewStart(InterviewRequest interviewReq) {
+        DateTime selectedStart = parseIsoDateTime(interviewReq == null ? null : interviewReq.scheduledStart);
+        return selectedStart == null
+            ? DateTime.newInstance(Date.today().addDays(3), Time.newInstance(9, 0, 0, 0))
+            : selectedStart;
+    }
+
+    private static DateTime resolveInterviewEnd(InterviewRequest interviewReq, DateTime interviewStart) {
+        DateTime selectedEnd = parseIsoDateTime(interviewReq == null ? null : interviewReq.scheduledEnd);
+        if (selectedEnd != null && selectedEnd > interviewStart) {
+            return selectedEnd;
+        }
+        return interviewStart.addMinutes(parseDurationMinutes(interviewReq == null ? null : interviewReq.duration));
+    }
+
+    private static DateTime parseIsoDateTime(String value) {
+        if (String.isBlank(value)) return null;
+        try {
+            return (DateTime) JSON.deserialize('"' + value + '"', DateTime.class);
+        } catch (Exception e) {
+            try {
+                return DateTime.valueOf(value.replace('T', ' ').replace('Z', ''));
+            } catch (Exception ignored) {
+                return null;
+            }
+        }
+    }
+
+    private static Integer parseDurationMinutes(String duration) {
+        if (String.isBlank(duration)) return 30;
+        Matcher matcher = Pattern.compile('(\\d+)').matcher(duration);
+        if (matcher.find()) {
+            Integer minutes = Integer.valueOf(matcher.group(1));
+            return minutes > 0 ? minutes : 30;
+        }
+        return 30;
     }
     
      /**
@@ -2301,6 +2322,9 @@ global class CandidateAPI {
         public String position;              // Job Position/Role
         public String interviewRound;        // Optional: First Round, Technical, etc.
         public String duration;              // Optional: 30 min, 60 min, etc.
+        public String scheduledStart;         // Optional: ISO datetime selected by employer
+        public String scheduledEnd;           // Optional: ISO datetime calculated from duration
+        public String interviewLink;          // Optional: Google Meet or other meeting URL
         public String message;               // Optional: Additional message for candidate
         public String jobOpportunityId;       // Optional: JobOpportunity__c ID
     }

@@ -122,6 +122,8 @@ global with sharing class TalentPoolRestResource {
         } catch (Exception e) {
             if (e.getMessage().contains('Feature access denied')) {
                 sendResponse(403, 'Your subscription does not include this feature');
+            } else if (e.getMessage().contains('Interview already exists')) {
+                sendResponse(409, e.getMessage());
             } else {
                 throw e;
             }
@@ -185,10 +187,13 @@ global with sharing class TalentPoolRestResource {
         }
         
         try {
-            TalentPoolController.requestInterview(
+            TalentPoolController.requestInterviewWithDetails(
                 request.campaignMemberId,
                 request.accountId,
-                request.message
+                request.message,
+                request.interviewLink,
+                request.scheduledStart,
+                request.scheduledEnd
             );
             sendResponse(200, new Map<String, String>{'status' => 'success', 'message' => 'Interview request sent'});
         } catch (Exception e) {
@@ -260,6 +265,9 @@ global with sharing class TalentPoolRestResource {
         global String campaignMemberId;
         global String accountId;
         global String message;
+        global String interviewLink;
+        global String scheduledStart;
+        global String scheduledEnd;
     }
 
     global class IdentityRevealResponse {

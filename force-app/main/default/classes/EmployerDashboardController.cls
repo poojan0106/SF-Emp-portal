@@ -278,6 +278,27 @@ global without sharing class EmployerDashboardController {
             ]) {
                 events.add(new CalendarEvent(t.Id, t.Subject, t.ActivityDate, 'interview'));
             }
+
+            for (Rescue_Opportunity__c rescue : [
+                SELECT Id, Contact__r.Name, Interview_Date__c, Status__c,
+                       Candidate_Availability_Start__c, Candidate_Availability_End__c
+                FROM Rescue_Opportunity__c
+                WHERE Account__c = :accountId
+                AND Status__c IN ('Scheduled', 'Confirmed', 'Reschedule Requested')
+                ORDER BY Interview_Date__c ASC NULLS LAST, CreatedDate DESC
+                LIMIT :queryLimit
+            ]) {
+                String title = 'Interview - ' + (rescue.Contact__r == null ? 'Candidate' : rescue.Contact__r.Name);
+                if (rescue.Status__c == 'Reschedule Requested') {
+                    title = 'Reschedule requested - ' + (rescue.Contact__r == null ? 'Candidate' : rescue.Contact__r.Name);
+                    if (rescue.Candidate_Availability_Start__c != null && rescue.Candidate_Availability_End__c != null) {
+                        title += ' | Available ' + rescue.Candidate_Availability_Start__c.format() +
+                            ' to ' + rescue.Candidate_Availability_End__c.format();
+                    }
+                }
+                Date eventDate = rescue.Interview_Date__c == null ? Date.today() : rescue.Interview_Date__c.date();
+                events.add(new CalendarEvent(rescue.Id, title, eventDate, 'interview'));
+            }
             
             res.statusCode = 200;
             res.responseBody = Blob.valueOf(JSON.serialize(

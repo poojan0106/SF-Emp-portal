@@ -20,6 +20,16 @@
                 <label>Completed</label>
             </value>
             <value>
+                <fullName>Confirmed</fullName>
+                <default>false</default>
+                <label>Confirmed</label>
+            </value>
+            <value>
+                <fullName>Reschedule Requested</fullName>
+                <default>false</default>
+                <label>Reschedule Requested</label>
+            </value>
+            <value>
                 <fullName>Cancelled</fullName>
                 <default>false</default>
                 <label>Cancelled</label>

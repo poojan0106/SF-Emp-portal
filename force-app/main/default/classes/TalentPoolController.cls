@@ -73,7 +73,7 @@ public with sharing class TalentPoolController {
             'Contact.Phone, Contact.MailingCity, Contact.R_ATS__Skills__c, Contact.Job_Role__c, Contact.Years_Experience__c, ' +
             'AI_Match_Score__c, Sentiment_Tags__c, Interest_Date__c, Full_Profile_Unlocked__c, Status, Swipe_Event__c, ' +
             'Identity_Reveal_Status__c, Identity_Reveal_Requested_Date__c, Identity_Reveal_Responded_Date__c ' +
-            'FROM CampaignMember WHERE CampaignId = :poolId AND Status IN (\'Interested\')';
+            'FROM CampaignMember WHERE CampaignId = :poolId AND Status IN (\'Interested\', \'In League\')';
         
         // Apply filters
         if (filters != null) {
@@ -207,6 +207,12 @@ public with sharing class TalentPoolController {
             } catch (Exception e) {
                 System.debug(LoggingLevel.ERROR, 'Unable to create identity reveal notification: ' + e.getMessage());
             }
+
+            try {
+                notifyCandidateRevealRequest(member);
+            } catch (Exception e) {
+                System.debug(LoggingLevel.ERROR, 'Unable to send identity reveal request email: ' + e.getMessage());
+            }
         }
 
         SubscriptionService.trackFeatureUsage(accountId, 'Profile_Unlock');
@@ -246,7 +252,12 @@ public with sharing class TalentPoolController {
         update member;
 
         syncRevealRequestDecision(member.Id, approved == true);
-        notifyEmployerRevealDecision(member, approved == true);
+        try {
+            notifyEmployerRevealDecision(member, approved == true);
+            notifyCandidateRevealDecision(member, approved == true);
+        } catch (Exception e) {
+            System.debug(LoggingLevel.ERROR, 'Unable to send identity reveal decision email: ' + e.getMessage());
+        }
         upsertProtectionMetric(member.ContactId);
 
         return new CandidateWrapper(member, 'Free', 0);
@@ -323,6 +334,31 @@ public with sharing class TalentPoolController {
         Messaging.sendEmail(emails, false);
     }
 
+    private static void notifyCandidateRevealRequest(CampaignMember member) {
+        if (member.Contact == null || String.isBlank(member.Contact.Email)) return;
+        Messaging.SingleEmailMessage email = new Messaging.SingleEmailMessage();
+        email.setToAddresses(new List<String>{ member.Contact.Email });
+        email.setSubject('Identity reveal request from ' + member.Campaign.Employer__r.Name);
+        email.setPlainTextBody(
+            member.Campaign.Employer__r.Name +
+            ' wants to view your identity. Open your candidate dashboard to approve or decline this request.'
+        );
+        Messaging.sendEmail(new List<Messaging.SingleEmailMessage>{ email }, false);
+    }
+
+    private static void notifyCandidateRevealDecision(CampaignMember member, Boolean approved) {
+        if (member.Contact == null || String.isBlank(member.Contact.Email)) return;
+        Messaging.SingleEmailMessage email = new Messaging.SingleEmailMessage();
+        email.setToAddresses(new List<String>{ member.Contact.Email });
+        email.setSubject(approved ? 'Identity reveal approved' : 'Identity reveal declined');
+        email.setPlainTextBody(
+            approved
+                ? 'You approved the identity reveal request from ' + member.Campaign.Employer__r.Name + '.'
+                : 'You declined the identity reveal request from ' + member.Campaign.Employer__r.Name + '. Your identity remains masked.'
+        );
+        Messaging.sendEmail(new List<Messaging.SingleEmailMessage>{ email }, false);
+    }
+
     private static void upsertProtectionMetric(Id candidateId) {
         List<CampaignMember> members = [
             SELECT Id, Identity_Reveal_Status__c, Full_Profile_Unlocked__c
@@ -360,26 +396,96 @@ public with sharing class TalentPoolController {
     
     @AuraEnabled
     public static void requestInterview(Id campaignMemberId, Id accountId, String message) {
+        requestInterviewWithLink(campaignMemberId, accountId, message, null);
+    }
+
+    @AuraEnabled
+    public static void requestInterviewWithLink(Id campaignMemberId, Id accountId, String message, String interviewLink) {
+        requestInterviewWithDetails(campaignMemberId, accountId, message, interviewLink, null, null);
+    }
+
+    @AuraEnabled
+    public static void requestInterviewWithDetails(Id campaignMemberId, Id accountId, String message, String interviewLink, String scheduledStart, String scheduledEnd) {
         // Validate subscription
         SubscriptionService.validateFeatureAccess(accountId, 'Interview_Request');
         
         CampaignMember member = [
-            SELECT Id, ContactId, Contact.Email, Contact.FirstName, CampaignId, Campaign.Employer__r.Name
+            SELECT Id, ContactId, Contact.Email, Contact.FirstName, CampaignId, Campaign.Employer__c, Campaign.Employer__r.Name
             FROM CampaignMember WHERE Id = :campaignMemberId
         ];
+        if (member.Campaign == null || member.Campaign.Employer__c != accountId) {
+            throw new AuraHandledException('Campaign member does not belong to this employer');
+        }
+
+        DateTime interviewStart = parseInterviewDateTime(scheduledStart);
+        if (interviewStart == null) {
+            interviewStart = DateTime.newInstance(Date.today().addDays(3), Time.newInstance(9, 0, 0, 0));
+        }
+        DateTime interviewEnd = parseInterviewDateTime(scheduledEnd);
+        if (interviewEnd == null || interviewEnd <= interviewStart) {
+            interviewEnd = interviewStart.addMinutes(30);
+        }
+
+        List<Interview__c> duplicateInterviews = [
+            SELECT Id
+            FROM Interview__c
+            WHERE Candidate__c = :member.ContactId
+            AND Interview_Date__c = :interviewStart
+            AND Interview_Status__c IN ('Scheduled', 'Confirmed', 'Reschedule Requested')
+            LIMIT 1
+        ];
+        if (!duplicateInterviews.isEmpty()) {
+            throw new AuraHandledException('Interview already exists for this candidate at the selected date/time');
+        }
         
         // Update member status
         member.Interview_Requested__c = true;
         member.Interview_Request_Date__c = DateTime.now();
         member.Status = 'Interview_Requested';
         update member;
+
+        Interview__c interview = new Interview__c(
+            Candidate__c = member.ContactId,
+            Interview_Date__c = interviewStart,
+            Interview_End_Date__c = interviewEnd,
+            Interview_Type__c = 'Video Call',
+            Interview_Status__c = 'Scheduled',
+            Interview_Link__c = interviewLink,
+            Interviewer__c = UserInfo.getUserId(),
+            Interviewer_Notes__c = message,
+            Next_Steps__c = 'Candidate should review and confirm interview invitation.'
+        );
+        insert interview;
+
+        try {
+            insert new Rescue_Opportunity__c(
+                Account__c = accountId,
+                Contact__c = member.ContactId,
+                CampaignMember_Id__c = member.Id,
+                Interview__c = interview.Id,
+                Interview_Date__c = interviewStart,
+                Interview_End_Date__c = interviewEnd,
+                Interview_Type__c = 'Video',
+                Status__c = 'Scheduled',
+                Blakeney_Prep_Notes__c = message
+            );
+        } catch (Exception rescueError) {
+            System.debug(LoggingLevel.ERROR, 'Unable to create Rescue_Opportunity__c for interview ' + interview.Id + ': ' + rescueError.getMessage());
+        }
         
         // Send notification email to candidate
+        String candidateMessage = message;
+        if (String.isNotBlank(interviewLink)) {
+            candidateMessage = String.isBlank(candidateMessage)
+                ? 'Interview Link: ' + interviewLink
+                : candidateMessage + '\n\nInterview Link: ' + interviewLink;
+        }
+
         EmailService.sendInterviewRequest(
             member.Contact.Email,
             member.Contact.FirstName,
             member.Campaign.Employer__r.Name,
-            message
+            candidateMessage
         );
 
         NotificationService.notifyInterviewInvitation(
@@ -387,6 +493,19 @@ public with sharing class TalentPoolController {
             member.Campaign.Employer__r.Name,
             null
         );
+    }
+
+    private static DateTime parseInterviewDateTime(String value) {
+        if (String.isBlank(value)) return null;
+        try {
+            return (DateTime) JSON.deserialize('"' + value + '"', DateTime.class);
+        } catch (Exception e) {
+            try {
+                return DateTime.valueOf(value.replace('T', ' ').replace('Z', ''));
+            } catch (Exception ignored) {
+                return null;
+            }
+        }
     }
     
     @AuraEnabled
@@ -407,7 +526,7 @@ public with sharing class TalentPoolController {
         List<AggregateResult> results = [
             SELECT AVG(AI_Match_Score__c) avgScore, AVG(Contact.Years_Experience__c) avgExp
             FROM CampaignMember
-            WHERE CampaignId = :poolId AND Status = 'Interested'
+            WHERE CampaignId = :poolId AND Status IN ('Interested', 'In League')
         ];
         
         System.debug('DEBUG 43: Aggregate Results Size = ' + results.size());
@@ -423,13 +542,13 @@ public with sharing class TalentPoolController {
         System.debug('DEBUG 45: newThisWeek Count = ' + newThisWeek);
         
         Integer count = [SELECT COUNT() FROM CampaignMember 
-                WHERE CampaignId = :poolId AND Status = 'Interested'];
+                WHERE CampaignId = :poolId AND Status IN ('Interested', 'In League')];
         
         // ✅ Query Job Roles
         List<CampaignMember> campaignMembers = [
             SELECT Contact.Job_Role__c 
             FROM CampaignMember 
-            WHERE Status = 'Interested' AND CampaignId = :poolId
+            WHERE Status IN ('Interested', 'In League') AND CampaignId = :poolId
         ];
         
         PoolMetrics metrics = new PoolMetrics();
@@ -481,7 +600,7 @@ public with sharing class TalentPoolController {
                 SELECT Contact.R_ATS__Skills__c
                 FROM CampaignMember
                 WHERE CampaignId = :poolId 
-                AND Status = 'Interested'
+                AND Status IN ('Interested', 'In League')
             ];
             
             for (CampaignMember member : members) {
