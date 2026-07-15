@@ -284,18 +284,11 @@ global without sharing class EmployerDashboardController {
                        Candidate_Availability_Start__c, Candidate_Availability_End__c
                 FROM Rescue_Opportunity__c
                 WHERE Account__c = :accountId
-                AND Status__c IN ('Scheduled', 'Confirmed', 'Reschedule Requested')
+                AND Status__c IN ('Scheduled', 'Confirmed')
                 ORDER BY Interview_Date__c ASC NULLS LAST, CreatedDate DESC
                 LIMIT :queryLimit
             ]) {
                 String title = 'Interview - ' + (rescue.Contact__r == null ? 'Candidate' : rescue.Contact__r.Name);
-                if (rescue.Status__c == 'Reschedule Requested') {
-                    title = 'Reschedule requested - ' + (rescue.Contact__r == null ? 'Candidate' : rescue.Contact__r.Name);
-                    if (rescue.Candidate_Availability_Start__c != null && rescue.Candidate_Availability_End__c != null) {
-                        title += ' | Available ' + rescue.Candidate_Availability_Start__c.format() +
-                            ' to ' + rescue.Candidate_Availability_End__c.format();
-                    }
-                }
                 Date eventDate = rescue.Interview_Date__c == null ? Date.today() : rescue.Interview_Date__c.date();
                 events.add(new CalendarEvent(rescue.Id, title, eventDate, 'interview'));
             }

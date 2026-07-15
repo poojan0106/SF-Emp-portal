@@ -204,7 +204,6 @@
         );
         update acc;
         System.debug('Account updated: ' + accountId);
-        unlockTalentPoolProfiles(accountId);
 
         // Parse dates safely
         Date startDate = parseIsoDatetime(currentPeriodStart);
@@ -434,7 +433,6 @@
           Profile_Access_Enabled__c = true
         );
         update acc;
-        unlockTalentPoolProfiles(accountId);
         System.debug('Profile access unlocked for: ' + accountId);
 
         res.statusCode = 200;
@@ -459,23 +457,4 @@
       }));
     }
 
-    private static void unlockTalentPoolProfiles(String accountId) {
-      List<CampaignMember> membersToUnlock = [
-        SELECT Id, Full_Profile_Unlocked__c, Unlocked_Date__c
-        FROM CampaignMember
-        WHERE Campaign.Employer__c = :accountId
-        AND Full_Profile_Unlocked__c = false
-        LIMIT 10000
-      ];
-
-      for (CampaignMember member : membersToUnlock) {
-        member.Full_Profile_Unlocked__c = true;
-        member.Unlocked_Date__c = DateTime.now();
-      }
-
-      if (!membersToUnlock.isEmpty()) {
-        update membersToUnlock;
-        System.debug('Unlocked talent pool profiles: ' + membersToUnlock.size());
-      }
-    }
   }

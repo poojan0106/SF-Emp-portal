@@ -89,6 +89,7 @@ public without sharing class RegistrationService {
             Name = regRequest.Company_Name__c,
             Industry = regRequest.Industry__c,
             Company_Size__c = regRequest.Company_Size__c,
+            Registered_Login_Email_Address__c = regRequest.Email__c,
             Is_Employer__c = true,
             Registration_Date__c = DateTime.now(),
             Registration_Source__c = 'Website',

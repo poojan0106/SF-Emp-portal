@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Employer__c</fullName>
+    <deleteConstraint>SetNull</deleteConstraint>
+    <label>Employer</label>
+    <referenceTo>Account</referenceTo>
+    <relationshipLabel>Reveal Audits</relationshipLabel>
+    <relationshipName>Reveal_Audits</relationshipName>
+    <required>false</required>
+    <trackTrending>false</trackTrending>
+    <type>Lookup</type>
+</CustomField>
