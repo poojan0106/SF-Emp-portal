@@ -6,14 +6,14 @@ BLAKENEY CHATBOT - REST API LAYER - WITH ENHANCED LOGGING
 
 @RestResource(urlMapping='/blakeney/*')
 global with sharing class BlakeneyRestAPI {
-    
+
     @HttpPost
     global static String doPost() {
         RestRequest req = RestContext.request;
         RestResponse res = RestContext.response;
         String endpoint = req.requestURI.substringAfter('/blakeney/');
         String requestBody = req.requestBody.toString();
-        
+
         try {
             if (endpoint == 'chat/message') {
                 return handleChatMessage(requestBody);
@@ -31,13 +31,13 @@ global with sharing class BlakeneyRestAPI {
             return JSON.serialize(new APIResponse(false, e.getMessage(), null));
         }
     }
-    
+
     @HttpGet
     global static String doGet() {
         RestRequest req = RestContext.request;
         RestResponse res = RestContext.response;
         String endpoint = req.requestURI.substringAfter('/blakeney/');
-        
+
         try {
             if (endpoint == 'chat/history') {
                 String sessionId = req.params.get('sessionId');
@@ -60,27 +60,27 @@ global with sharing class BlakeneyRestAPI {
             return JSON.serialize(new APIResponse(false, e.getMessage(), null));
         }
     }
-    
+
     // POST /blakeney/chat/message
     private static String handleChatMessage(String requestBody) {
-        System.debug('═══════════════════════════════════════════════════════');
-        System.debug('🌐 BlakeneyRestAPI.handleChatMessage');
+        System.debug('â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•');
+        System.debug('ðŸŒ BlakeneyRestAPI.handleChatMessage');
         System.debug('   Raw Request Body: ' + requestBody);
-        
+
         ChatMessageRequest cmr = (ChatMessageRequest) JSON.deserialize(requestBody, ChatMessageRequest.class);
-        
+
         System.debug('   Parsed Request:');
         System.debug('      sessionId: ' + cmr.sessionId);
         System.debug('      contactId: ' + cmr.contactId);
         System.debug('      message: ' + cmr.message);
         System.debug('      contextType: ' + cmr.contextType);
         System.debug('      questionCount (from client): ' + cmr.questionCount);
-        
+
         String questionCount = String.isNotBlank(cmr.questionCount) ? cmr.questionCount : '0';
-        
+
         System.debug('   Using questionCount: ' + questionCount);
-        System.debug('═══════════════════════════════════════════════════════');
-        
+        System.debug('â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•');
+
         BlakeneyChatService.ChatResponse response = BlakeneyChatService.processMessage(
             cmr.sessionId,
             cmr.contactId,
@@ -97,13 +97,13 @@ global with sharing class BlakeneyRestAPI {
             cmr.aiModel,
             cmr.totalTokens
         );
-        
-        System.debug('═══════════════════════════════════════════════════════');
-        System.debug('🌐 BlakeneyRestAPI Response:');
+
+        System.debug('â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•');
+        System.debug('ðŸŒ BlakeneyRestAPI Response:');
         System.debug('   questionCount (returning to client): ' + response.questionCount);
         System.debug('   message: ' + response.message);
-        System.debug('═══════════════════════════════════════════════════════');
-        
+        System.debug('â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•');
+
         ChatMessageResponse chatResp = new ChatMessageResponse();
         chatResp.sessionId = response.sessionId;
         chatResp.message = response.message;
@@ -114,33 +114,33 @@ global with sharing class BlakeneyRestAPI {
         chatResp.inputActive = response.inputActive;
         chatResp.inputType = response.inputType;
         chatResp.inputPlaceholder = response.inputPlaceholder;
-        
+
         return JSON.serialize(new APIResponse(true, 'Success', chatResp));
     }
-    
+
     // GET /blakeney/chat/history
     private static String handleChatHistory(String sessionId, String contactId) {
         List<Chat_Interaction__c> history = BlakeneyChatService.getConversationHistory(sessionId, contactId);
         return JSON.serialize(new APIResponse(true, 'Success', history));
     }
-    
+
     // POST /blakeney/intent/save (Legacy - for partial updates)
     private static String handleIntentSave(String requestBody) {
         CareerIntentRequest cir = (CareerIntentRequest) JSON.deserialize(requestBody, CareerIntentRequest.class);
         System.enqueueJob(new IntentSaveQueueable(
-            cir.contactId, cir.shortTermGoal, cir.mediumTermGoal, 
+            cir.contactId, cir.shortTermGoal, cir.mediumTermGoal,
             cir.longTermGoal, cir.aspirationalGoal
         ));
         return JSON.serialize(new APIResponse(true, 'Intent save queued', null));
     }
-    
+
     // POST /blakeney/career/save (Complete 10-field career data)
     private static String handleCompleteCareerDataSave(String requestBody) {
         CompleteCareerDataRequest ccdr = (CompleteCareerDataRequest) JSON.deserialize(requestBody, CompleteCareerDataRequest.class);
-        
+
         System.debug('Received complete career data for contact: ' + ccdr.contactId);
         System.debug('Session ID: ' + ccdr.sessionId);
-        
+
         // Queue all career data for async save (creates NEW record)
         System.enqueueJob(new IntentSaveQueueable(
             ccdr.contactId,
@@ -156,41 +156,41 @@ global with sharing class BlakeneyRestAPI {
             ccdr.companySize,
             ccdr.industryPreferences
         ));
-        
+
         return JSON.serialize(new APIResponse(true, 'Complete career data save queued', null));
     }
-    
+
     // GET /blakeney/intent/get
     private static String handleIntentGet(String contactId) {
         Career_Intent__c intent = CareerIntentService.getCareerIntent(contactId);
         return JSON.serialize(new APIResponse(true, 'Success', intent));
     }
-    
+
     // GET /blakeney/intent/check - NEW: Check if user has existing data
     private static String handleIntentCheck(String contactId) {
         List<Career_Intent__c> intents = [
-            SELECT Id, Contact__c,
+            SELECT Id, Contact__c, Candidate__c,
                    Short_Term_Goal__c, Medium_Term_Goal__c, Long_Term_Goal__c, Aspirational_Goal__c,
                    Willing_to_Relocate__c, Short_Term_Remote__c, Min_Salary_Expactation__c,
                    Max_Salary_Expactation__c, Short_Term_Company_Size__c, Industry_Preferences__c,
                    Role_Title__c
-            FROM Career_Intent__c 
-            WHERE Contact__c = :contactId 
-            ORDER BY CreatedDate DESC 
+            FROM Career_Intent__c
+            WHERE Contact__c = :contactId OR Candidate__c = :contactId
+            ORDER BY LastModifiedDate DESC
             LIMIT 1
         ];
-        
+
         if (intents.isEmpty()) {
             return JSON.serialize(new APIResponse(true, 'No existing data', null));
         }
-        
+
         Career_Intent__c intent = intents[0];
-        
+
         // Build summary of filled fields
         IntentCheckResponse checkResp = new IntentCheckResponse();
         checkResp.hasData = true;
         checkResp.filledFields = new List<String>();
-        
+
         if (String.isNotBlank(intent.Short_Term_Goal__c)) {
             checkResp.filledFields.add('Short-term goal');
         }
@@ -224,16 +224,16 @@ global with sharing class BlakeneyRestAPI {
         if (String.isNotBlank(intent.Role_Title__c)) {
             checkResp.filledFields.add('Current role');
         }
-        
+
         checkResp.nextQuestion = calculateNextQuestion(intent);
-        
+
         return JSON.serialize(new APIResponse(true, 'Success', checkResp));
     }
-    
+
     // Calculate next question number based on filled fields
     private static Integer calculateNextQuestion(Career_Intent__c intent) {
         if (intent == null) return 1;
-        
+
         if (String.isBlank(intent.Short_Term_Goal__c)) return 1;
         if (String.isBlank(intent.Medium_Term_Goal__c)) return 2;
         if (String.isBlank(intent.Long_Term_Goal__c)) return 3;
@@ -245,17 +245,17 @@ global with sharing class BlakeneyRestAPI {
         if (String.isBlank(intent.Short_Term_Company_Size__c)) return 9;
         if (String.isBlank(intent.Industry_Preferences__c)) return 10;
         if (String.isBlank(intent.Role_Title__c)) return 11;
-        
+
         return 12; // All complete
     }
-    
+
     // POST /blakeney/constraints/save (Legacy)
     private static String handleConstraintsSave(String requestBody) {
         CareerConstraintsRequest ccr = (CareerConstraintsRequest) JSON.deserialize(requestBody, CareerConstraintsRequest.class);
         System.enqueueJob(new ConstraintsSaveQueueable(ccr));
         return JSON.serialize(new APIResponse(true, 'Constraints save queued', null));
     }
-    
+
     // GET /blakeney/constraints/get
     private static String handleConstraintsGet(String contactId) {
         List<Career_Constraints__c> constraints = [
@@ -269,17 +269,17 @@ global with sharing class BlakeneyRestAPI {
         ];
         return JSON.serialize(new APIResponse(true, 'Success', constraints.isEmpty() ? null : constraints[0]));
     }
-    
+
     // ========================================================================
     // WRAPPER CLASSES
     // ========================================================================
-    
+
     global class APIResponse {
         public Boolean success;
         public String message;
         public Object data;
         public Long timestamp;
-        
+
         public APIResponse(Boolean s, String m, Object d) {
             this.success = s;
             this.message = m;
@@ -287,7 +287,7 @@ global with sharing class BlakeneyRestAPI {
             this.timestamp = DateTime.now().getTime();
         }
     }
-    
+
     global class ChatMessageRequest {
         public String sessionId;
         public String contactId;
@@ -304,7 +304,7 @@ global with sharing class BlakeneyRestAPI {
         public String aiModel;
         public Integer totalTokens;
     }
-    
+
     global class ChatMessageResponse {
         public String sessionId;
         public String message;
@@ -316,7 +316,7 @@ global with sharing class BlakeneyRestAPI {
         public String inputType;
         public String inputPlaceholder;
     }
-    
+
     global class CareerIntentRequest {
         public String contactId;
         public String shortTermGoal;
@@ -324,7 +324,7 @@ global with sharing class BlakeneyRestAPI {
         public String longTermGoal;
         public String aspirationalGoal;
     }
-    
+
     global class CompleteCareerDataRequest {
         public String contactId;
         public String sessionId;
@@ -339,7 +339,7 @@ global with sharing class BlakeneyRestAPI {
         public String companySize;
         public String industryPreferences;
     }
-    
+
     global class CareerConstraintsRequest {
         public String contactId;
         public String preferredLocations;
@@ -358,7 +358,7 @@ global with sharing class BlakeneyRestAPI {
         public String culturePreferences;
         public String dealBreakers;
     }
-    
+
     // NEW: Intent check response
     global class IntentCheckResponse {
         public Boolean hasData;

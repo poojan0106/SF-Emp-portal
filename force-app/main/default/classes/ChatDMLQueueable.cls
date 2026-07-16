@@ -7,7 +7,7 @@ FIXED: Correct signal detection based on PREVIOUS question
 ----------------------------------------------------------------------------
 */
 public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
-    
+
     private String sessionId;
     private String contactId;
     private String userMessage;
@@ -20,9 +20,9 @@ public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
     private Boolean saveIntent;
     private String answeredQuestionCount;
 
-    public ChatDMLQueueable(String sessionId, String contactId, 
+    public ChatDMLQueueable(String sessionId, String contactId,
                             String userMessage, String assistantMessage,
-                            String contextType, Integer tokenCount, 
+                            String contextType, Integer tokenCount,
                             Long responseTime, String aiModel, Boolean needsDataCopy) {
         this(
             sessionId,
@@ -37,10 +37,10 @@ public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
             true
         );
     }
-    
-    public ChatDMLQueueable(String sessionId, String contactId, 
+
+    public ChatDMLQueueable(String sessionId, String contactId,
                             String userMessage, String assistantMessage,
-                            String contextType, Integer tokenCount, 
+                            String contextType, Integer tokenCount,
                             Long responseTime, String aiModel, Boolean needsDataCopy,
                             Boolean saveIntent) {
         this(
@@ -58,9 +58,9 @@ public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
         );
     }
 
-    public ChatDMLQueueable(String sessionId, String contactId, 
+    public ChatDMLQueueable(String sessionId, String contactId,
                             String userMessage, String assistantMessage,
-                            String contextType, Integer tokenCount, 
+                            String contextType, Integer tokenCount,
                             Long responseTime, String aiModel, Boolean needsDataCopy,
                             Boolean saveIntent, String answeredQuestionCount) {
         this.sessionId = sessionId;
@@ -75,16 +75,16 @@ public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
         this.saveIntent = saveIntent != null ? saveIntent : true;
         this.answeredQuestionCount = answeredQuestionCount;
     }
-    
+
     public void execute(QueueableContext qc) {
         Savepoint sp = Database.setSavepoint();
-        
+
         try {
             DateTime now = DateTime.now();
-            
+
             // ============ DML 1: Bulk Insert Both Messages ============
             List<Chat_Interaction__c> messages = new List<Chat_Interaction__c>();
-            
+
             // User message
             messages.add(new Chat_Interaction__c(
                 Contact__c = contactId,
@@ -95,7 +95,7 @@ public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
                 Timestamp__c = now.addSeconds(-1),
                 Started_At__c = now
             ));
-            
+
             // Assistant message (clean any input markers before storing)
             String cleanedAssistantMsg = cleanInputMarkers(assistantMessage);
             messages.add(new Chat_Interaction__c(
@@ -110,22 +110,22 @@ public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
                 AI_Model__c = aiModel,
                 Started_At__c = now
             ));
-            
+
             insert messages;
-            
+
             // ============ DML 2: Copy existing data if needed (BEFORE extraction) ============
             if (needsDataCopy) {
                 copyExistingDataToNewSession(contactId, sessionId);
             }
-            
+
             // ============ DML 3: Extract & Update Session Career Intent ============
             if (saveIntent && shouldExtractIntent(contextType)) {
                 extractAndUpdateSessionIntent(contactId, sessionId, userMessage, cleanedAssistantMsg, answeredQuestionCount);
             }
-            
+
             // ============ DML 4: Update Contact Timestamp ============
             updateContactTimestamp(contactId, now);
-            
+
         } catch (Exception e) {
             Database.rollback(sp);
             System.debug(LoggingLevel.ERROR, 'ChatDMLQueueable Error: ' + e.getMessage());
@@ -133,13 +133,15 @@ public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
             insertErrorLog('ChatDMLQueueable', e.getMessage(), e.getStackTraceString(), contactId);
         }
     }
-    
+
     // Extract intent and update/create session-specific record
     private void extractAndUpdateSessionIntent(String contactId, String sessionId, String userMsg, String aiMsg, String answeredQuestionCount) {
         if (String.isNotBlank(answeredQuestionCount)) {
             Career_Intent__c mappedIntent = getSessionIntent(contactId, sessionId);
             Boolean mappedChanged = saveByQuestionCount(mappedIntent, userMsg, answeredQuestionCount);
             if (mappedChanged) {
+                mappedIntent.Contact__c = contactId;
+                mappedIntent.Candidate__c = contactId;
                 mappedIntent.Last_Check_In__c = DateTime.now();
                 upsert mappedIntent;
                 System.debug('Updated Career Intent by questionCount ' + answeredQuestionCount + ' for session: ' + sessionId);
@@ -149,136 +151,138 @@ public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
 
         // CRITICAL: Skip if this is a resume decision response
         if (isResumeDecision(userMsg) && !hasRemotePreferenceSignal(aiMsg)) {
-            System.debug('⏭️ Skipping save - this is a resume decision, not a career answer');
+            System.debug('â­ï¸ Skipping save - this is a resume decision, not a career answer');
             return;
         }
-        
+
         // Get or create intent for THIS SESSION ONLY
         Career_Intent__c intent = getSessionIntent(contactId, sessionId);
-        
+
         Boolean changed = false;
 
-        
+
         // FIXED: Check what question was JUST ANSWERED (in AI's next response)
         // The AI asks the NEXT question, so user just answered the PREVIOUS one
-        
+
         // Short-term goal (6 months) - AI asks about 2-5 years next
         if (hasMediumTermSignal(aiMsg)) {
             String extracted = cleanMessage(userMsg);
             if (String.isNotBlank(extracted)) {
                 intent.Short_Term_Goal__c = extracted;
                 changed = true;
-                System.debug('✅ Saved Short-term goal: ' + extracted);
+                System.debug('âœ… Saved Short-term goal: ' + extracted);
             }
         }
-        
+
         // Medium-term goal (2-5 years) - AI asks about 10+ years next
         else if (hasLongTermSignal(aiMsg)) {
             String extracted = cleanMessage(userMsg);
             if (String.isNotBlank(extracted)) {
                 intent.Medium_Term_Goal__c = extracted;
                 changed = true;
-                System.debug('✅ Saved Medium-term goal: ' + extracted);
+                System.debug('âœ… Saved Medium-term goal: ' + extracted);
             }
         }
-        
+
         // Long-term goal (10+ years) - AI asks about dream job next
         else if (hasAspirationalSignal(aiMsg)) {
             String extracted = cleanMessage(userMsg);
             if (String.isNotBlank(extracted)) {
                 intent.Long_Term_Goal__c = extracted;
                 changed = true;
-                System.debug('✅ Saved Long-term goal: ' + extracted);
+                System.debug('âœ… Saved Long-term goal: ' + extracted);
             }
         }
-        
+
         // Aspirational goal (dream job) - AI asks about location next
         else if (hasRelocatingSignal(aiMsg)) {
             String extracted = cleanMessage(userMsg);
             if (String.isNotBlank(extracted)) {
                 intent.Aspirational_Goal__c = extracted;
                 changed = true;
-                System.debug('✅ Saved Aspirational goal: ' + extracted);
+                System.debug('âœ… Saved Aspirational goal: ' + extracted);
             }
         }
-        
+
         // Willing to relocate - AI asks about remote preference next
         else if (hasRemotePreferenceSignal(aiMsg)) {
             String extracted = userMsg;
             if (String.isNotBlank(extracted)) {
                 intent.Willing_to_Relocate__c = extracted;
                 changed = true;
-                System.debug('✅ Saved Work location: ' + extracted);
+                System.debug('âœ… Saved Work location: ' + extracted);
             }
         }
-        
+
         // Remote preference - AI asks about minimum salary next
         else if (hasMinSalarySignal(aiMsg)) {
             String extracted = userMsg;
             if (String.isNotBlank(extracted)) {
                 intent.Short_Term_Remote__c = extracted;
                 changed = true;
-                System.debug('✅ Saved Remote preference: ' + extracted);
+                System.debug('âœ… Saved Remote preference: ' + extracted);
             }
         }
-        
+
         // Minimum salary - AI asks about maximum salary next
         else if (hasMaxSalarySignal(aiMsg)) {
             String extracted = userMsg;
             if (String.isNotBlank(extracted)) {
                 intent.Min_Salary_Expactation__c = normalizeSalary(extracted);
                 changed = true;
-                System.debug('✅ Saved Minimum salary: ' + extracted);
+                System.debug('âœ… Saved Minimum salary: ' + extracted);
             }
         }
-        
+
         // Maximum salary - AI asks about company size next
         else if (hasCompanySizePreferenceSignal(aiMsg)) {
             String extracted = userMsg;
             if (String.isNotBlank(extracted)) {
                 intent.Max_Salary_Expactation__c = normalizeSalary(extracted);
                 changed = true;
-                System.debug('✅ Saved Maximum salary: ' + extracted);
+                System.debug('âœ… Saved Maximum salary: ' + extracted);
             }
         }
-        
+
         // Company size - AI asks about industry next
         else if (hasIndustryPreferenceSignal(aiMsg)) {
             String extracted = userMsg;
             if (String.isNotBlank(extracted)) {
                 intent.Short_Term_Company_Size__c = extracted;
                 changed = true;
-                System.debug('✅ Saved Company size: ' + extracted);
+                System.debug('âœ… Saved Company size: ' + extracted);
             }
         }
-        
+
         // Industry preferences - AI asks about current role next
         else if (hasCurrentRoleSignal(aiMsg)) {
             String extracted = cleanMessage(userMsg);
             if (String.isNotBlank(extracted)) {
                 intent.Industry_Preferences__c = extracted;
                 changed = true;
-                System.debug('✅ Saved Industry preferences: ' + extracted);
+                System.debug('âœ… Saved Industry preferences: ' + extracted);
             }
         }
-        
+
         // Current role - AI says profile complete next
         else if (hasCompletionSignal(aiMsg)) {
             String extracted = cleanMessage(userMsg);
             if (String.isNotBlank(extracted)) {
                 intent.Role_Title__c = extracted;
                 changed = true;
-                System.debug('✅ Saved Current role: ' + extracted);
+                System.debug('âœ… Saved Current role: ' + extracted);
             }
         }
-        
+
         if (changed) {
+            intent.Contact__c = contactId;
+            intent.Candidate__c = contactId;
             intent.Last_Check_In__c = DateTime.now();
             upsert intent;
-            System.debug('✅ Updated Career Intent for session: ' + sessionId);
+            System.debug('âœ… Updated Career Intent for session: ' + sessionId);
         }
     }
-    
+
     private Boolean saveByQuestionCount(Career_Intent__c intent, String userMsg, String answeredQuestionCount) {
         Integer questionNumber;
         try {
@@ -337,97 +341,105 @@ public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
 
         return false;
     }
-    
+
     // Get intent for THIS SESSION ONLY (creates new if doesn't exist for session)
     private Career_Intent__c getSessionIntent(String contactId, String sessionId) {
         List<Career_Intent__c> intents = [
-            SELECT Id, Contact__c, Session_ID__c,
-                   Short_Term_Goal__c, Medium_Term_Goal__c, Long_Term_Goal__c, 
+            SELECT Id, Contact__c, Candidate__c, Session_ID__c,
+                   Short_Term_Goal__c, Medium_Term_Goal__c, Long_Term_Goal__c,
                    Aspirational_Goal__c, Willing_to_Relocate__c, Short_Term_Remote__c,
-                   Min_Salary_Expactation__c, Max_Salary_Expactation__c, 
+                   Min_Salary_Expactation__c, Max_Salary_Expactation__c,
                    Short_Term_Company_Size__c, Industry_Preferences__c, Role_Title__c
-            FROM Career_Intent__c 
-            WHERE Contact__c = :contactId
-            ORDER BY CreatedDate DESC 
+            FROM Career_Intent__c
+            WHERE Contact__c = :contactId OR Candidate__c = :contactId
+            ORDER BY LastModifiedDate DESC
             // AND Session_ID__c = :sessionId
             LIMIT 1
         ];
-        
+
         if (!intents.isEmpty()) {
+            if (intents[0].Contact__c == null) {
+                intents[0].Contact__c = contactId;
+            }
+            if (intents[0].Candidate__c == null) {
+                intents[0].Candidate__c = contactId;
+            }
             return intents[0];
         }
-        
+
         // Create new intent for this session
         Career_Intent__c newIntent = new Career_Intent__c();
         newIntent.Contact__c = contactId;
+        newIntent.Candidate__c = contactId;
         newIntent.Session_ID__c = sessionId;
         return newIntent;
     }
-    
+
     // Check if message is a resume decision (not a real career answer)
     private Boolean isResumeDecision(String message) {
         if (String.isBlank(message)) return false;
         String lower = message.toLowerCase();
-        
+
         // Resume decision keywords
-        return lower.contains('update information') || 
+        return lower.contains('update information') ||
                lower.contains('continue where i left off') ||
                lower.contains('update') && lower.length() < 20 ||
                lower.contains('continue') && lower.length() < 20 ||
-               lower.equals('yes') || 
+               lower.equals('yes') ||
                lower.equals('no');
     }
-    
+
     // Copy existing Career Intent data to new session record
     private void copyExistingDataToNewSession(String contactId, String sessionId) {
         try {
-            System.debug('📋 Starting data copy for session: ' + sessionId);
-            
+            System.debug('ðŸ“‹ Starting data copy for session: ' + sessionId);
+
             // Get latest existing intent (not from current session)
             List<Career_Intent__c> existingIntents = [
-                SELECT Id, Short_Term_Goal__c, Medium_Term_Goal__c, Long_Term_Goal__c,
+                SELECT Id, Contact__c, Candidate__c, Short_Term_Goal__c, Medium_Term_Goal__c, Long_Term_Goal__c,
                        Aspirational_Goal__c, Willing_to_Relocate__c, Short_Term_Remote__c,
                        Min_Salary_Expactation__c, Max_Salary_Expactation__c,
                        Short_Term_Company_Size__c, Industry_Preferences__c, Role_Title__c
                 FROM Career_Intent__c
-                WHERE Contact__c = :contactId
+                WHERE Contact__c = :contactId OR Candidate__c = :contactId
                 // AND Session_ID__c != :sessionId
-                ORDER BY CreatedDate DESC
+                ORDER BY LastModifiedDate DESC
                 LIMIT 1
             ];
-            
+
             if (existingIntents.isEmpty()) {
-                System.debug('⚠️ No existing intent found to copy from');
+                System.debug('âš ï¸ No existing intent found to copy from');
                 return;
             }
-            
+
             Career_Intent__c existingIntent = existingIntents[0];
-            
+
             // Check if current session already has an intent record
             List<Career_Intent__c> currentSessionIntents = [
-                SELECT Id, Short_Term_Goal__c, Medium_Term_Goal__c, Long_Term_Goal__c,
+                SELECT Id, Contact__c, Candidate__c, Short_Term_Goal__c, Medium_Term_Goal__c, Long_Term_Goal__c,
                        Aspirational_Goal__c, Willing_to_Relocate__c, Short_Term_Remote__c,
                        Min_Salary_Expactation__c, Max_Salary_Expactation__c,
                        Short_Term_Company_Size__c, Industry_Preferences__c, Role_Title__c
                 FROM Career_Intent__c
-                WHERE Contact__c = :contactId
-                ORDER BY CreatedDate DESC
-             //   AND Session_ID__c = :sessionId
+                WHERE Contact__c = :contactId OR Candidate__c = :contactId
+                ORDER BY LastModifiedDate DESC
+                // AND Session_ID__c = :sessionId
                 LIMIT 1
             ];
-            
+
             Career_Intent__c newIntent;
-            
+
             if (currentSessionIntents.isEmpty()) {
                 // Create new record for current session
                 newIntent = new Career_Intent__c();
                 newIntent.Contact__c = contactId;
+                newIntent.Candidate__c = contactId;
                 newIntent.Session_ID__c = sessionId;
             } else {
                 // Use existing record
                 newIntent = currentSessionIntents[0];
             }
-            
+
             // Copy all filled fields from existing intent
             if (String.isNotBlank(existingIntent.Short_Term_Goal__c)) {
                 newIntent.Short_Term_Goal__c = existingIntent.Short_Term_Goal__c;
@@ -462,104 +474,106 @@ public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
             if (String.isNotBlank(existingIntent.Role_Title__c)) {
                 newIntent.Role_Title__c = existingIntent.Role_Title__c;
             }
-            
+
+            newIntent.Contact__c = contactId;
+            newIntent.Candidate__c = contactId;
             newIntent.Last_Check_In__c = DateTime.now();
-            
+
             // Upsert the record
             upsert newIntent;
-            
-            System.debug('✅ Copied existing data to new session record');
+
+            System.debug('âœ… Copied existing data to new session record');
             System.debug('   - Copied from: ' + existingIntent.Id);
             System.debug('   - Copied to: ' + newIntent.Id);
-            
+
         } catch (Exception e) {
-            System.debug(LoggingLevel.ERROR, '❌ Failed to copy existing data: ' + e.getMessage());
+            System.debug(LoggingLevel.ERROR, 'âŒ Failed to copy existing data: ' + e.getMessage());
         }
     }
-    
+
     // FIXED SIGNAL DETECTION: What question is AI asking NEXT?
     // This tells us what the user JUST answered
-    
-    // AI asks about 2-5 years → User just answered about 6 months (short-term)
+
+    // AI asks about 2-5 years â†’ User just answered about 6 months (short-term)
     private Boolean hasMediumTermSignal(String text) {
         if (String.isBlank(text)) return false;
         String t = text.toLowerCase();
         return t.contains('2-5 years') ;
     }
-    
-    // AI asks about 10+ years → User just answered about 2-5 years (medium-term)
+
+    // AI asks about 10+ years â†’ User just answered about 2-5 years (medium-term)
     private Boolean hasLongTermSignal(String text) {
         if (String.isBlank(text)) return false;
         String t = text.toLowerCase();
         return t.contains('long-term') || t.contains('10+ years') || t.contains('10 years');
     }
 
-    // AI asks about dream job → User just answered about 10+ years (long-term)
+    // AI asks about dream job â†’ User just answered about 10+ years (long-term)
     private Boolean hasAspirationalSignal(String text) {
         if (String.isBlank(text)) return false;
         String t = text.toLowerCase();
-        return t.contains('dream') || t.contains('ideal') || 
+        return t.contains('dream') || t.contains('ideal') ||
                t.contains('absolute dream role');
     }
-    
-    // AI asks about relocating → User just answered about dream job (aspirational)
+
+    // AI asks about relocating â†’ User just answered about dream job (aspirational)
     private Boolean hasRelocatingSignal(String text) {
         if (String.isBlank(text)) return false;
         String t = text.toLowerCase();
-        return t.contains('where would you like to work') || 
+        return t.contains('where would you like to work') ||
                t.contains('open to relocat') || t.contains('prefer to stay');
     }
-    
-    // AI asks about remote work → User just answered about relocation
+
+    // AI asks about remote work â†’ User just answered about relocation
     private Boolean hasRemotePreferenceSignal(String text) {
         if (String.isBlank(text)) return false;
         String t = text.toLowerCase();
         return t.contains('remote work') || t.contains('preference for remote');
     }
-    
-    // AI asks about minimum salary → User just answered about remote preference
+
+    // AI asks about minimum salary â†’ User just answered about remote preference
     private Boolean hasMinSalarySignal(String text) {
         if (String.isBlank(text)) return false;
         String t = text.toLowerCase();
         return t.contains('minimum salary');
     }
-    
-    // AI asks about maximum salary → User just answered about minimum salary
+
+    // AI asks about maximum salary â†’ User just answered about minimum salary
     private Boolean hasMaxSalarySignal(String text) {
         if (String.isBlank(text)) return false;
         String t = text.toLowerCase();
         return t.contains('maximum salary');
     }
-    
-    // AI asks about company size → User just answered about maximum salary
+
+    // AI asks about company size â†’ User just answered about maximum salary
     private Boolean hasCompanySizePreferenceSignal(String text) {
         if (String.isBlank(text)) return false;
         String t = text.toLowerCase();
         return t.contains('size company') || t.contains('company do you prefer');
     }
-    
-    // AI asks about industries → User just answered about company size
+
+    // AI asks about industries â†’ User just answered about company size
     private Boolean hasIndustryPreferenceSignal(String text) {
         if (String.isBlank(text)) return false;
         String t = text.toLowerCase();
         return t.contains('industries are you') || t.contains('what industries');
     }
-    
-    // AI asks about current role → User just answered about industries
+
+    // AI asks about current role â†’ User just answered about industries
     private Boolean hasCurrentRoleSignal(String text) {
         if (String.isBlank(text)) return false;
         String t = text.toLowerCase();
         return t.contains('current role') || t.contains('what is your current');
     }
-    
-    // AI says completion → User just answered about current role
+
+    // AI says completion â†’ User just answered about current role
     private Boolean hasCompletionSignal(String text) {
         if (String.isBlank(text)) return false;
         String t = text.toLowerCase();
-        return t.contains('profile is') || t.contains('complete') || 
+        return t.contains('profile is') || t.contains('complete') ||
                t.contains('all set') || t.contains('thank');
     }
-    
+
     // Normalize salary
     private Integer normalizeSalary(String input) {
         if (String.isBlank(input)) return null;
@@ -570,7 +584,7 @@ public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
             return null;
         }
     }
-    
+
     // Clean message
     private String cleanMessage(String msg) {
         if (String.isBlank(msg)) return null;
@@ -578,13 +592,13 @@ public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
         cleaned = cleaned.replaceAll('(?i)^(well|so|um|like|basically),?\\s*', '');
         return cleaned.length() > 5000 ? cleaned.substring(0, 5000) : cleaned;
     }
-    
+
     // Clean input markers from message before storing
     private String cleanInputMarkers(String message) {
         if (String.isBlank(message)) return message;
         return message.replaceAll('\\[INPUT:(TEXT|NUMBER|DATE|NONE)\\]', '').trim();
     }
-    
+
     // Check if intent extraction should run
     private Boolean shouldExtractIntent(String contextType) {
         Set<String> intentContexts = new Set<String>{
@@ -592,14 +606,14 @@ public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
         };
         return intentContexts.contains(contextType);
     }
-    
+
     // Truncate message to fit field limits
     private String truncateMessage(String message) {
         if (String.isBlank(message)) return '';
         Integer maxLength = 130000;
         return message.length() > maxLength ? message.substring(0, maxLength) : message;
     }
-    
+
     // Update contact last interaction timestamp
     private void updateContactTimestamp(String contactId, DateTime now) {
         try {
@@ -610,7 +624,7 @@ public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
             System.debug(LoggingLevel.WARN, 'Failed to update contact timestamp: ' + e.getMessage());
         }
     }
-    
+
     // Insert error log for monitoring
     private void insertErrorLog(String source, String errorMsg, String stackTrace, String relatedId) {
         try {

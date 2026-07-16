@@ -1,20 +1,20 @@
 /*
 ----------------------------------------------------------------------------
-IntentSaveQueueable.cls - CREATES NEW CAREER INTENT EVERY TIME
-Stores complete 10-field career data in NEW record per session
+IntentSaveQueueable.cls
+Creates or updates latest Career_Intent__c for candidate
 ----------------------------------------------------------------------------
 */
 public class IntentSaveQueueable implements Queueable {
-    
+
     private String contactId;
     private String sessionId;
-    
+
     // Career Intent fields (4)
     private String shortTermGoal;
     private String mediumTermGoal;
     private String longTermGoal;
     private String aspirationalGoal;
-    
+
     // Career Constraints fields (6)
     private String workLocation;
     private String remotePreference;
@@ -22,7 +22,7 @@ public class IntentSaveQueueable implements Queueable {
     private String maxSalary;
     private String companySize;
     private String industryPreferences;
-    
+
     // Constructor for complete career data
     public IntentSaveQueueable(String contactId, String sessionId,
                               String shortTermGoal, String mediumTermGoal,
@@ -43,7 +43,7 @@ public class IntentSaveQueueable implements Queueable {
         this.companySize = companySize;
         this.industryPreferences = industryPreferences;
     }
-    
+
     // Legacy constructor for partial intent updates
     public IntentSaveQueueable(String contactId, String shortTermGoal, String mediumTermGoal,
                               String longTermGoal, String aspirationalGoal) {
@@ -53,72 +53,102 @@ public class IntentSaveQueueable implements Queueable {
         this.longTermGoal = longTermGoal;
         this.aspirationalGoal = aspirationalGoal;
     }
-    
+
     public void execute(QueueableContext qc) {
         Savepoint sp = Database.setSavepoint();
-        
+
         try {
-            // ALWAYS CREATE NEW RECORD - No upsert, pure insert
-            Career_Intent__c newIntent = new Career_Intent__c();
-            newIntent.Contact__c = contactId;
-            newIntent.Session_ID__c = sessionId;
-            newIntent.Last_Check_In__c = DateTime.now();
-            
+            Career_Intent__c intent = getLatestIntent(contactId);
+            Boolean isNew = intent == null;
+            if (isNew) {
+                intent = new Career_Intent__c();
+            }
+
+            intent.Contact__c = contactId;
+            intent.Candidate__c = contactId;
+            if (String.isNotBlank(sessionId)) {
+                intent.Session_ID__c = sessionId;
+            }
+            intent.Last_Check_In__c = DateTime.now();
+
             // Career Intent fields (from conversation answers)
             if (String.isNotBlank(shortTermGoal)) {
-                newIntent.Short_Term_Goal__c = shortTermGoal;
+                intent.Short_Term_Goal__c = shortTermGoal;
             }
             if (String.isNotBlank(mediumTermGoal)) {
-                newIntent.Medium_Term_Goal__c = mediumTermGoal;
+                intent.Medium_Term_Goal__c = mediumTermGoal;
             }
             if (String.isNotBlank(longTermGoal)) {
-                newIntent.Long_Term_Goal__c = longTermGoal;
+                intent.Long_Term_Goal__c = longTermGoal;
             }
             if (String.isNotBlank(aspirationalGoal)) {
-                newIntent.Aspirational_Goal__c = aspirationalGoal;
+                intent.Aspirational_Goal__c = aspirationalGoal;
             }
-            
+
             // Career Constraints fields (from conversation answers)
             if (String.isNotBlank(workLocation)) {
-                newIntent.Willing_to_Relocate__c = workLocation;
+                intent.Willing_to_Relocate__c = workLocation;
             }
             if (String.isNotBlank(remotePreference)) {
-                newIntent.Short_Term_Remote__c = remotePreference;
+                intent.Short_Term_Remote__c = remotePreference;
             }
             if (String.isNotBlank(minSalary)) {
-                newIntent.Min_Salary_Expactation__c = normalizeSalary(minSalary);
+                intent.Min_Salary_Expactation__c = normalizeSalary(minSalary);
             }
             if (String.isNotBlank(maxSalary)) {
-                newIntent.Max_Salary_Expactation__c = normalizeSalary(maxSalary);
+                intent.Max_Salary_Expactation__c = normalizeSalary(maxSalary);
             }
             if (String.isNotBlank(companySize)) {
-                newIntent.Short_Term_Company_Size__c = companySize;
+                intent.Short_Term_Company_Size__c = companySize;
             }
             if (String.isNotBlank(industryPreferences)) {
-                newIntent.Industry_Preferences__c = industryPreferences;
+                intent.Industry_Preferences__c = industryPreferences;
             }
-            
-            // Insert new record
-            insert newIntent;
-            
-            System.debug('Created new Career Intent record: ' + newIntent.Id);
-            
+
+            if (isNew) {
+                insert intent;
+            } else {
+                update intent;
+            }
+
+            System.debug((isNew ? 'Created' : 'Updated') + ' Career Intent record: ' + intent.Id);
+
         } catch (Exception e) {
             Database.rollback(sp);
             System.debug(LoggingLevel.ERROR, 'IntentSaveQueueable Error: ' + e.getMessage());
             System.debug(LoggingLevel.ERROR, 'Stack: ' + e.getStackTraceString());
         }
     }
-    
+
+    private Career_Intent__c getLatestIntent(String contactId) {
+        if (String.isBlank(contactId)) {
+            return null;
+        }
+
+        List<Career_Intent__c> intents = [
+            SELECT Id, Contact__c, Candidate__c, Session_ID__c,
+                   Short_Term_Goal__c, Medium_Term_Goal__c, Long_Term_Goal__c,
+                   Aspirational_Goal__c, Willing_to_Relocate__c, Short_Term_Remote__c,
+                   Min_Salary_Expactation__c, Max_Salary_Expactation__c,
+                   Short_Term_Company_Size__c, Industry_Preferences__c
+            FROM Career_Intent__c
+            WHERE Contact__c = :contactId OR Candidate__c = :contactId
+            ORDER BY LastModifiedDate DESC
+            LIMIT 1
+        ];
+
+        return intents.isEmpty() ? null : intents[0];
+    }
+
     // Normalize salary input
     private Integer normalizeSalary(String input) {
         if (String.isBlank(input)) {
             return null;
         }
-        
+
         // Remove $ and commas
         String cleaned = input.replace('$', '').replace(',', '').trim();
-        
+
         try {
             return Integer.valueOf(cleaned);
         } catch (Exception e) {
