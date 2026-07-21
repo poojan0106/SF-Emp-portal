@@ -166,7 +166,7 @@ public with sharing class JobListingService {
                 RecordType.DeveloperName, Department__c, Status, Type, IsActive,
                 StartDate, EndDate, Description, R_ATS__No_of_openings__c,R_ATS__Location__c,
                 R_ATS__Salary__c, R_ATS__Minimum_Salary__c, R_ATS__Maximum_Salary__c,
-                R_ATS__Bill_Rate__c, R_ATS__Pay_Rate__c, Source__c,
+                R_ATS__Bill_Rate__c, R_ATS__Pay_Rate__c, Source__c, Must_Have_Skills__c,
                 Owner.Name, Opportunity__r.Name, Employer__c,
                 Employer__r.Name, NumberOfContacts
             FROM Campaign
@@ -179,6 +179,7 @@ public with sharing class JobListingService {
 
         JobListingDTO.JobDetail detail = new JobListingDTO.JobDetail();
         detail.summary = buildSingleJobSummary(c);
+        detail.summary.skills = parseSkillText(c.Must_Have_Skills__c);
         detail.description = c.Description;
 
         // ── Pipeline candidates ──
@@ -749,6 +750,8 @@ public with sharing class JobListingService {
         s.applicants = c.NumberOfContacts != null ? c.NumberOfContacts : 0;
         s.openings = c.R_ATS__No_of_openings__c != null ? Integer.valueOf(c.R_ATS__No_of_openings__c) : 0;
         s.salary = formatSalaryRange(c.R_ATS__Minimum_Salary__c, c.R_ATS__Maximum_Salary__c, c.R_ATS__Salary__c);
+        s.salMin = c.R_ATS__Minimum_Salary__c == null ? null : String.valueOf(c.R_ATS__Minimum_Salary__c.setScale(0));
+        s.salMax = c.R_ATS__Maximum_Salary__c == null ? null : String.valueOf(c.R_ATS__Maximum_Salary__c.setScale(0));
         s.billRate = c.R_ATS__Bill_Rate__c;
         s.payRate = c.R_ATS__Pay_Rate__c;
         s.source = c.Source__c;
@@ -861,6 +864,15 @@ public with sharing class JobListingService {
             if (String.isNotBlank(skill)) cleaned.add(skill.trim());
         }
         return cleaned.isEmpty() ? null : String.join(cleaned, ', ');
+    }
+
+    private static List<String> parseSkillText(String skillsText) {
+        List<String> skills = new List<String>();
+        if (String.isBlank(skillsText)) return skills;
+        for (String skill : skillsText.split(',')) {
+            if (String.isNotBlank(skill)) skills.add(skill.trim());
+        }
+        return skills;
     }
 
     private static void linkSkillCodes(Id cId, List<String> names) {

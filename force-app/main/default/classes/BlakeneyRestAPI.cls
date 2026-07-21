@@ -173,7 +173,7 @@ global with sharing class BlakeneyRestAPI {
                    Short_Term_Goal__c, Medium_Term_Goal__c, Long_Term_Goal__c, Aspirational_Goal__c,
                    Willing_to_Relocate__c, Short_Term_Remote__c, Min_Salary_Expactation__c,
                    Max_Salary_Expactation__c, Short_Term_Company_Size__c, Industry_Preferences__c,
-                   Role_Title__c
+                   Role_Title__c, Skills__c
             FROM Career_Intent__c
             WHERE Contact__c = :contactId OR Candidate__c = :contactId
             ORDER BY LastModifiedDate DESC
@@ -224,6 +224,9 @@ global with sharing class BlakeneyRestAPI {
         if (String.isNotBlank(intent.Role_Title__c)) {
             checkResp.filledFields.add('Current role');
         }
+        if (String.isNotBlank(intent.Skills__c)) {
+            checkResp.filledFields.add('Skills');
+        }
 
         checkResp.nextQuestion = calculateNextQuestion(intent);
 
@@ -245,8 +248,9 @@ global with sharing class BlakeneyRestAPI {
         if (String.isBlank(intent.Short_Term_Company_Size__c)) return 9;
         if (String.isBlank(intent.Industry_Preferences__c)) return 10;
         if (String.isBlank(intent.Role_Title__c)) return 11;
+        if (String.isBlank(intent.Skills__c)) return 12;
 
-        return 12; // All complete
+        return 13; // All complete
     }
 
     // POST /blakeney/constraints/save (Legacy)

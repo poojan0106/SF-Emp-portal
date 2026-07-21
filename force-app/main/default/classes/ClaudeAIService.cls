@@ -129,7 +129,8 @@ public with sharing class ClaudeAIService {
             'FIELD_8: Maximum salary expectation - Ask: "What\'s your maximum salary expectation?"',
             'FIELD_9: Preferred company size - Ask: "What size company do you prefer working for?"',
             'FIELD_10: Industry preferences - Ask: "What industries are you most interested in?"',
-            'FIELD_11: Current Role - Ask: "What is your current role in your company?"'
+            'FIELD_11: Current Role - Ask: "What is your current role in your company?"',
+            'FIELD_12: Skills - Ask: "What tools, technologies, or software have you worked with? Add your technical and professional skills."'
         };
         
         // Determine NEXT question to ask
@@ -139,7 +140,7 @@ public with sharing class ClaudeAIService {
         
         if (questionsAsked >= questionSequence.size()) {
             nextQuestion = 'ALL FIELDS COLLECTED - Thank the candidate warmly and let them know their profile is complete.';
-            completionStatus = 'COMPLETE - All 12 fields collected';
+            completionStatus = 'COMPLETE - All 13 fields collected';
             exactQuestionText = 'Congratulations! Your profile is complete.';
         } else {
             nextQuestion = questionSequence[questionsAsked];
@@ -400,7 +401,7 @@ public with sharing class ClaudeAIService {
         System.debug('📋 GENERATING FALLBACK for question index: ' + questionsAsked);
         
         // If we've completed all questions, return completion message
-        if (questionsAsked >= 12) {
+        if (questionsAsked >= 13) {
             return generateCompletionResponse();
         }
         
@@ -417,7 +418,8 @@ public with sharing class ClaudeAIService {
             'Sounds good! What\'s your maximum salary expectation?',  // 8
             'Perfect! What size company do you prefer working for?',  // 9
             'Excellent! What industries are you most interested in?',  // 10
-            'Great! What is your current role in your company?'  // 11
+            'Great! What is your current role in your company?',  // 11
+            'Got it! What tools, technologies, or software have you worked with? Add your technical and professional skills.'  // 12
         };
         
         if (questionsAsked >= 0 && questionsAsked < fallbackQuestions.size()) {

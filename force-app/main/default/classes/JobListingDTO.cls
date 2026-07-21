@@ -21,6 +21,8 @@ public with sharing class JobListingDTO {
         @AuraEnabled public Integer openings;
         @AuraEnabled public Integer filled;
         @AuraEnabled public String salary;
+        @AuraEnabled public String salMin;
+        @AuraEnabled public String salMax;
         @AuraEnabled public Decimal billRate;
         @AuraEnabled public Decimal payRate;
         @AuraEnabled public String source;

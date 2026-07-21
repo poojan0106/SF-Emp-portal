@@ -338,6 +338,10 @@ public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
             intent.Role_Title__c = cleaned;
             return true;
         }
+        if (questionNumber == 12) {
+            intent.Skills__c = cleaned;
+            return true;
+        }
 
         return false;
     }
@@ -349,7 +353,8 @@ public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
                    Short_Term_Goal__c, Medium_Term_Goal__c, Long_Term_Goal__c,
                    Aspirational_Goal__c, Willing_to_Relocate__c, Short_Term_Remote__c,
                    Min_Salary_Expactation__c, Max_Salary_Expactation__c,
-                   Short_Term_Company_Size__c, Industry_Preferences__c, Role_Title__c
+                   Short_Term_Company_Size__c, Industry_Preferences__c, Role_Title__c,
+                   Skills__c
             FROM Career_Intent__c
             WHERE Contact__c = :contactId OR Candidate__c = :contactId
             ORDER BY LastModifiedDate DESC
