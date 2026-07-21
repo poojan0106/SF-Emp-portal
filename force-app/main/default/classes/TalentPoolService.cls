@@ -35,9 +35,11 @@ public with sharing class TalentPoolService {
         new StatusConfig('Unlocked', true, false, 40),            // Profile Revealed
         
         // Interview Stage
-        new StatusConfig('Interview_Requested', true, false, 50), // Interview Requested
-        new StatusConfig('Interview_Scheduled', true, false, 60), // Interview Scheduled
-        new StatusConfig('Interviewed', true, false, 70),         // Interviewed
+        new StatusConfig('Interview Requested', true, false, 50),
+        new StatusConfig('Interview Confirmed', true, false, 60),
+        new StatusConfig('Interview Rejected', true, false, 65),
+        new StatusConfig('Reschedule Requested', true, false, 70),
+        new StatusConfig('Interviewed', true, false, 80),
         
         // Outcome Stage
         new StatusConfig('Offered', true, false, 80),             // Offer Made
@@ -162,6 +164,7 @@ public with sharing class TalentPoolService {
                     // Update existing member with new Swipe_Event__c
                     CampaignMember existingMember = existingMembers.get(memberKey);
                     System.debug('[TalentPoolService] Found existing member: ' + existingMember.Id + ', updating Swipe_Event__c to ' + swipe.Id);
+                    existingMember.Status = 'In League';
                     existingMember.Swipe_Event__c = swipe.Id;
                     membersToUpdate.add(existingMember);
                 } else {
@@ -170,7 +173,7 @@ public with sharing class TalentPoolService {
                     CampaignMember member = new CampaignMember(
                         CampaignId = pool.Id,
                         ContactId = swipe.Candidate__c,
-                        Status = 'Interested',
+                        Status = 'In League',
                         Intent_Added_Date__c = Date.today(),
                         Intent_Source__c = 'Swipe',
                         Swipe_Event__c = swipe.Id
@@ -332,7 +335,7 @@ public static void createTalentPoolStatuses(List<Id> campaignIds) {
     
     // Step 2: Build list of statuses to create
     List<CampaignMemberStatus> statusesToInsert = new List<CampaignMemberStatus>();
-    Map<Id, CampaignMemberStatus> interestedStatusByCampaign = new Map<Id, CampaignMemberStatus>();
+    Map<Id, CampaignMemberStatus> inLeagueStatusByCampaign = new Map<Id, CampaignMemberStatus>();
     
     for (Id campaignId : campaignIds) {
         Set<String> existingLabels = existingLabelsByCampaign.get(campaignId);
@@ -353,8 +356,8 @@ public static void createTalentPoolStatuses(List<Id> campaignIds) {
                 );
                 statusesToInsert.add(newStatus);
                 
-                if (config.label == 'Interested') {
-                    interestedStatusByCampaign.put(campaignId, newStatus);
+                if (config.label == 'In League') {
+                    inLeagueStatusByCampaign.put(campaignId, newStatus);
                 }
                 
                 System.debug('Will create: "' + config.label + '" for campaign ' + campaignId);
@@ -382,11 +385,11 @@ public static void createTalentPoolStatuses(List<Id> campaignIds) {
         System.debug('Created ' + successCount + ' of ' + statusesToInsert.size() + ' statuses');
     }
     
-    // Step 4: Set 'Interested' as default
+    // Step 4: Set 'In League' as default
     List<CampaignMemberStatus> statusesToMakeDefault = new List<CampaignMemberStatus>();
     
     for (Id campaignId : campaignIds) {
-        CampaignMemberStatus interestedStatus = interestedStatusByCampaign.get(campaignId);
+        CampaignMemberStatus interestedStatus = inLeagueStatusByCampaign.get(campaignId);
         
         if (interestedStatus != null && interestedStatus.Id != null) {
             statusesToMakeDefault.add(new CampaignMemberStatus(
@@ -394,10 +397,10 @@ public static void createTalentPoolStatuses(List<Id> campaignIds) {
                 IsDefault = true
             ));
         } else {
-            // Query for existing 'Interested' status
+            // Query for existing 'In League' status
             List<CampaignMemberStatus> existing = [
                 SELECT Id, IsDefault FROM CampaignMemberStatus 
-                WHERE CampaignId = :campaignId AND Label = 'Interested'
+                WHERE CampaignId = :campaignId AND Label = 'In League'
                 LIMIT 1
             ];
             if (!existing.isEmpty() && !existing[0].IsDefault) {
@@ -412,7 +415,7 @@ public static void createTalentPoolStatuses(List<Id> campaignIds) {
     if (!statusesToMakeDefault.isEmpty()) {
         try {
             update statusesToMakeDefault;
-            System.debug('✓ Set "Interested" as default for ' + statusesToMakeDefault.size() + ' campaigns');
+            System.debug('✓ Set "In League" as default for ' + statusesToMakeDefault.size() + ' campaigns');
         } catch (DmlException e) {
             System.debug(LoggingLevel.ERROR, '✗ Error setting default: ' + e.getMessage());
         }

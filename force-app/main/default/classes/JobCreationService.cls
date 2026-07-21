@@ -5,49 +5,35 @@ public class JobCreationService {
   
   public static JobCreationResponse createJobCampaign(JobCreationRequest jobReq) {
       
-      // Map job types to their corresponding Record Type DeveloperNames
-    Map<String, String> typeToRecordTypeMap = new Map<String, String>{
-      'Permanent' => 'Permanent',
-      'Temporary' => 'AdHoc',
-      'Contract' => 'Contract'
-      // Add more mappings as needed
-    };
-    
-    String rtDeveloperName = typeToRecordTypeMap.get(jobReq.type);
-    if (rtDeveloperName == null) {
-      System.debug('Invalid job type: ' + jobReq.type);
-    }
-      
-      // Get the Record Type based on the type field (e.g., "Permanent", "Contract", etc.)
-    RecordType rt = [SELECT Id FROM RecordType 
-                     WHERE SObjectType = 'Campaign' 
-                     AND DeveloperName = :rtDeveloperName
-                     LIMIT 1];
-      
-      if (rt == null) {
-      System.debug('Record Type not found for type: ' + jobReq.type);
-    }
+    Id jobCampaignRecordTypeId = getJobCampaignRecordTypeId();
     
     // Create Campaign record
     Campaign campaign = new Campaign(
-      RecordTypeId = rt.Id,
+      RecordTypeId = jobCampaignRecordTypeId,
       Name = jobReq.title,
+      Job_Title__c = jobReq.title,
       Department__c = jobReq.dept,
       Type = jobReq.type,
+      Employment_Type__c = jobReq.type,
       Employer__c = jobReq.accountId,
       Status = jobReq.isDraft ? 'Planned' : 'Active',
       StartDate = Date.today(),
       EndDate = jobReq.deadline != null ? Date.valueOf(jobReq.deadline) : null,
       Description = jobReq.description,
+      Is_Talent_Pool__c = true,
+      Created_by_Flint__c = false,
+      Created_Via__c = 'manual',
+      Source__c = 'manual',
       R_ATS__No_of_openings__c = jobReq.openings,
       R_ATS__Minimum_Salary__c = jobReq.salMin != null ? Decimal.valueOf(jobReq.salMin) : null,
       R_ATS__Maximum_Salary__c = jobReq.salMax != null ? Decimal.valueOf(jobReq.salMax) : null,
       Remote_Position__c = jobReq.remote,
       R_ATS__Location__c = jobReq.remote ? 'Remote' : jobReq.loc,
-      Must_Have_Skills__c = jobReq.skills == null ? null : JSON.serialize(jobReq.skills)
+      Must_Have_Skills__c = skillsToText(jobReq.skills)
     );
     
     insert campaign;
+    TalentPoolService.createTalentPoolStatuses(new List<Id>{ campaign.Id });
 
     if (!jobReq.isDraft) {
       notifyInterestedCandidatesForNewJob(campaign, jobReq);
@@ -60,6 +46,25 @@ public class JobCreationService {
       campaign.Status,
       'Job ' + (jobReq.isDraft ? 'saved as draft' : 'published') + ' successfully'
     );
+  }
+
+  private static Id getJobCampaignRecordTypeId() {
+    Schema.RecordTypeInfo info = Schema.SObjectType.Campaign
+      .getRecordTypeInfosByDeveloperName()
+      .get('Job_Campaign');
+    if (info == null) {
+      throw new AuraHandledException('Campaign Record Type Job_Campaign not found');
+    }
+    return info.getRecordTypeId();
+  }
+
+  private static String skillsToText(List<String> skills) {
+    if (skills == null || skills.isEmpty()) return null;
+    List<String> cleaned = new List<String>();
+    for (String skill : skills) {
+      if (String.isNotBlank(skill)) cleaned.add(skill.trim());
+    }
+    return cleaned.isEmpty() ? null : String.join(cleaned, ', ');
   }
 
   private static void notifyInterestedCandidatesForNewJob(Campaign campaign, JobCreationRequest jobReq) {

@@ -64,7 +64,17 @@ public with sharing class TalentPoolController {
             System.debug('DEBUG 12: Filters=' + JSON.serialize(filters));
         
         // Get subscription tier
-        Campaign pool = [SELECT Employer__c FROM Campaign WHERE Id = :poolId];
+        List<Campaign> poolRows = [SELECT Employer__c FROM Campaign WHERE Id = :poolId LIMIT 1];
+        if (poolRows.isEmpty()) {
+            CandidateListResult emptyResult = new CandidateListResult();
+            emptyResult.candidates = new List<CandidateWrapper>();
+            emptyResult.totalCount = 0;
+            emptyResult.pageNumber = pageNumber;
+            emptyResult.pageSize = pageSize;
+            emptyResult.totalPages = 0;
+            return emptyResult;
+        }
+        Campaign pool = poolRows[0];
         String tier = SubscriptionService.getSubscriptionTier(pool.Employer__c);
          System.debug('DEBUG 13: Subscription Tier = ' + tier);
         
@@ -73,7 +83,7 @@ public with sharing class TalentPoolController {
             'Contact.Phone, Contact.MailingCity, Contact.R_ATS__Skills__c, Contact.Job_Role__c, Contact.Years_Experience__c, ' +
             'AI_Match_Score__c, Sentiment_Tags__c, Interest_Date__c, Full_Profile_Unlocked__c, Status, Swipe_Event__c, ' +
             'Identity_Reveal_Status__c, Identity_Reveal_Requested_Date__c, Identity_Reveal_Responded_Date__c ' +
-            'FROM CampaignMember WHERE CampaignId = :poolId AND Status IN (\'Interested\', \'In League\')';
+            'FROM CampaignMember WHERE CampaignId = :poolId AND Status IN (\'In League\', \'Interview Requested\', \'Interview Confirmed\', \'Interview Rejected\', \'Reschedule Requested\')';
         
         // Apply filters
         if (filters != null) {
@@ -441,7 +451,8 @@ public with sharing class TalentPoolController {
         // Update member status
         member.Interview_Requested__c = true;
         member.Interview_Request_Date__c = DateTime.now();
-        member.Status = 'Interview_Requested';
+        ensureInterviewCampaignMemberStatuses(new Set<Id>{ member.CampaignId });
+        member.Status = 'Interview Requested';
         update member;
 
         Interview__c interview = new Interview__c(
@@ -495,6 +506,43 @@ public with sharing class TalentPoolController {
         );
     }
 
+    private static void ensureInterviewCampaignMemberStatuses(Set<Id> campaignIds) {
+        if (campaignIds == null || campaignIds.isEmpty()) return;
+        Set<String> needed = new Set<String>{
+            'Interview Requested',
+            'Interview Confirmed',
+            'Interview Rejected',
+            'Reschedule Requested'
+        };
+        Set<String> existingKeys = new Set<String>();
+        for (CampaignMemberStatus statusRecord : [
+            SELECT CampaignId, Label
+            FROM CampaignMemberStatus
+            WHERE CampaignId IN :campaignIds
+            AND Label IN :needed
+        ]) {
+            existingKeys.add(String.valueOf(statusRecord.CampaignId) + '|' + statusRecord.Label);
+        }
+        List<CampaignMemberStatus> toInsert = new List<CampaignMemberStatus>();
+        Integer sortOrder = 50;
+        for (Id campaignId : campaignIds) {
+            for (String label : needed) {
+                String key = String.valueOf(campaignId) + '|' + label;
+                if (!existingKeys.contains(key)) {
+                    toInsert.add(new CampaignMemberStatus(
+                        CampaignId = campaignId,
+                        Label = label,
+                        HasResponded = true,
+                        IsDefault = false,
+                        SortOrder = sortOrder
+                    ));
+                }
+                sortOrder++;
+            }
+        }
+        if (!toInsert.isEmpty()) Database.insert(toInsert, false);
+    }
+
     private static DateTime parseInterviewDateTime(String value) {
         if (String.isBlank(value)) return null;
         try {
@@ -513,10 +561,23 @@ public with sharing class TalentPoolController {
         System.debug('DEBUG 40: Entered getPoolMetrics');
     	System.debug('DEBUG 41: poolId = ' + poolId);
         
-        Campaign pool = [
+        List<Campaign> poolRows = [
             SELECT Id, NumberOfContacts, Quality_Score__c
             FROM Campaign WHERE Id = :poolId
+            LIMIT 1
         ];
+        if (poolRows.isEmpty()) {
+            PoolMetrics emptyMetrics = new PoolMetrics();
+            emptyMetrics.total = 0;
+            emptyMetrics.candidates = 0;
+            emptyMetrics.newThisWeek = 0;
+            emptyMetrics.avgExperience = 0;
+            emptyMetrics.topSkills = new List<String>();
+            emptyMetrics.jobRoles = new List<String>();
+            emptyMetrics.qualityScore = 0;
+            return emptyMetrics;
+        }
+        Campaign pool = poolRows[0];
         
             System.debug('DEBUG 42: Pool Retrieved | Id=' + pool.Id + 
         ' | NumberOfContacts=' + pool.NumberOfContacts + 

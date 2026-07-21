@@ -7,9 +7,8 @@
 public with sharing class JobListingService {
 
     // Campaign Record Type Developer Names for Job campaigns only
-    // EXCLUDES: Talent Pool, Client Campaign, Hotlist
     private static final Set<String> JOB_RECORD_TYPES = new Set<String>{
-        'Permanent', 'Contract', 'AdHoc'
+        'Job_Campaign'
     };
 
     // Campaign Member Status groupings (from Custom Setting: Campaign Member Status)
@@ -95,8 +94,9 @@ public with sharing class JobListingService {
         System.debug('Filter: ' + filter);
         
         String query = 'SELECT Id, Name,R_ATS__Location__c, R_ATS__Job_Reference_Number__c, '
-            + 'RecordType.DeveloperName, Department__c, Status, IsActive, '
+            + 'RecordType.DeveloperName, Department__c, Status, Type, IsActive, '
             + 'StartDate, EndDate, R_ATS__No_of_openings__c, R_ATS__Salary__c, '
+            + 'R_ATS__Minimum_Salary__c, R_ATS__Maximum_Salary__c, '
             + 'R_ATS__Bill_Rate__c, R_ATS__Pay_Rate__c, Source__c, Owner.Name, Description, '
             + 'Opportunity__r.Name, Employer__c, Employer__r.Name, '
             + 'NumberOfContacts, '
@@ -163,9 +163,10 @@ public with sharing class JobListingService {
         
         Campaign c = [
             SELECT Id, Name, R_ATS__Job_Reference_Number__c,
-                RecordType.DeveloperName, Department__c, Status, IsActive,
+                RecordType.DeveloperName, Department__c, Status, Type, IsActive,
                 StartDate, EndDate, Description, R_ATS__No_of_openings__c,R_ATS__Location__c,
-                R_ATS__Salary__c, R_ATS__Bill_Rate__c, R_ATS__Pay_Rate__c, Source__c,
+                R_ATS__Salary__c, R_ATS__Minimum_Salary__c, R_ATS__Maximum_Salary__c,
+                R_ATS__Bill_Rate__c, R_ATS__Pay_Rate__c, Source__c,
                 Owner.Name, Opportunity__r.Name, Employer__c,
                 Employer__r.Name, NumberOfContacts
             FROM Campaign
@@ -263,15 +264,11 @@ public with sharing class JobListingService {
         if (String.isBlank(req.title)) {
             throw new AuraHandledException('Job title is required');
         }
-        if (String.isBlank(req.type)
-            || !JOB_RECORD_TYPES.contains(req.type)) {
-            throw new AuraHandledException(
-                'Valid record type required (Permanent, Contract, Temporary)');
+        if (String.isBlank(req.type)) {
+            throw new AuraHandledException('Employment type is required');
         }
 
-        Id rtId = Schema.SObjectType.Campaign
-            .getRecordTypeInfosByDeveloperName()
-            .get(req.type).getRecordTypeId();
+        Id rtId = getJobCampaignRecordTypeId();
         
         System.debug('RecordTypeId: ' + rtId);
 
@@ -281,16 +278,25 @@ public with sharing class JobListingService {
 
         Campaign c = new Campaign();
         c.Name = req.title;
+        c.Job_Title__c = req.title;
         c.RecordTypeId = rtId;
         c.Department__c = req.dept;
         c.Description = req.description;
+        c.Type = req.type;
+        c.Employment_Type__c = req.type;
+        c.Is_Talent_Pool__c = true;
+        c.Created_by_Flint__c = false;
+        c.Created_Via__c = 'manual';
         c.R_ATS__Job_Reference_Number__c = jobRef;
         c.R_ATS__No_of_openings__c = req.openings != null ? String.valueOf(req.openings) : '1';
-        c.R_ATS__Salary__c = Decimal.valueOf(req.salMax);
+        c.R_ATS__Minimum_Salary__c = String.isNotBlank(req.salMin) ? Decimal.valueOf(req.salMin) : null;
+        c.R_ATS__Maximum_Salary__c = String.isNotBlank(req.salMax) ? Decimal.valueOf(req.salMax) : null;
+        c.R_ATS__Salary__c = String.isNotBlank(req.salMax) ? Decimal.valueOf(req.salMax) : null;
         c.R_ATS__Bill_Rate__c = req.billRate;
         c.R_ATS__Pay_Rate__c = req.payRate;
         c.Urgency__c = req.urgency;
-        c.Source__c = 'Quick Post';
+        c.Source__c = 'manual';
+        c.Must_Have_Skills__c = skillsToText(req.skills);
         c.Employer__c = req.accountId;
 
         if (req.remote == true) {
@@ -312,6 +318,7 @@ public with sharing class JobListingService {
         System.debug('Campaign To Insert: ' + c);
 
         insert c;
+        TalentPoolService.createTalentPoolStatuses(new List<Id>{ c.Id });
         
         System.debug('Inserted Campaign Id: ' + c.Id);
         
@@ -343,8 +350,9 @@ public with sharing class JobListingService {
         
         Campaign c = [
             SELECT Id, Name, Department__c, Description, R_ATS__Salary__c,
+                   R_ATS__Minimum_Salary__c, R_ATS__Maximum_Salary__c,
                    R_ATS__Bill_Rate__c, R_ATS__Pay_Rate__c, R_ATS__No_of_openings__c,
-                   EndDate, Urgency__c, R_ATS__Location__c
+                   EndDate, Urgency__c, R_ATS__Location__c, Created_Via__c, Source__c
             FROM Campaign 
             WHERE Id = :campaignId 
             LIMIT 1
@@ -352,24 +360,23 @@ public with sharing class JobListingService {
         
         System.debug('Updating Campaign: ' + c);
         
-        // Update RecordType if provided
-        if (String.isNotBlank(req.type) && JOB_RECORD_TYPES.contains(req.type)) {
-            try {
-                Id rtId = Schema.SObjectType.Campaign
-                    .getRecordTypeInfosByDeveloperName()
-                    .get(req.type).getRecordTypeId();
-                c.RecordTypeId = rtId;
-                System.debug('Updated RecordType to: ' + req.type + ' (Id: ' + rtId + ')');
-            } catch (Exception e) {
-                System.debug('ERROR updating RecordType: ' + e.getMessage());
-            }
-        }
+        c.RecordTypeId = getJobCampaignRecordTypeId();
 
         // Update all fields from request
         if (String.isNotBlank(req.title)) {
             c.Name = req.title;
+            c.Job_Title__c = req.title;
             System.debug('Updated Name: ' + req.title);
         }
+
+        if (String.isNotBlank(req.type)) {
+            c.Type = req.type;
+            c.Employment_Type__c = req.type;
+        }
+
+        c.Is_Talent_Pool__c = true;
+        c.Created_Via__c = String.isBlank(c.Created_Via__c) ? 'manual' : c.Created_Via__c;
+        c.Source__c = String.isBlank(c.Source__c) ? 'manual' : c.Source__c;
         
         if (String.isNotBlank(req.dept)) {  // ← Changed from req.department
             c.Department__c = req.dept;
@@ -385,13 +392,15 @@ public with sharing class JobListingService {
         if (String.isNotBlank(req.salMax)) {
             try {
                 c.R_ATS__Salary__c = Decimal.valueOf(req.salMax);
+                c.R_ATS__Maximum_Salary__c = Decimal.valueOf(req.salMax);
                 System.debug('Updated Salary (Max): ' + req.salMax);
             } catch (Exception e) {
                 System.debug('ERROR parsing salMax: ' + e.getMessage());
             }
-        } else if (String.isNotBlank(req.salMin)) {
+        }
+        if (String.isNotBlank(req.salMin)) {
             try {
-                c.R_ATS__Salary__c = Decimal.valueOf(req.salMin);
+                c.R_ATS__Minimum_Salary__c = Decimal.valueOf(req.salMin);
                 System.debug('Updated Salary (Min): ' + req.salMin);
             } catch (Exception e) {
                 System.debug('ERROR parsing salMin: ' + e.getMessage());
@@ -452,6 +461,10 @@ public with sharing class JobListingService {
                 System.debug('Closing job');
         	}
         }
+
+        if (req.skills != null && !req.skills.isEmpty()) {
+            c.Must_Have_Skills__c = skillsToText(req.skills);
+        }
         
         update c;
         System.debug('Campaign Updated Successfully');
@@ -497,13 +510,13 @@ public with sharing class JobListingService {
         System.debug('Opportunity Count: ' + oppCount);
         if (oppCount == 0) {
             Campaign camp = [
-                SELECT Id, Name, RecordType.DeveloperName,
+                SELECT Id, Name, Type,
                        	Employer__c, R_ATS__No_of_openings__c
                 FROM Campaign WHERE Id = :campaignId LIMIT 1
             ];
             JobListingDTO.JobCreateRequest stub = new JobListingDTO.JobCreateRequest();
             stub.title = camp.Name;
-            stub.type = camp.RecordType.DeveloperName;
+            stub.type = camp.Type;
             stub.accountId = camp.Employer__c;
             stub.openings = camp.R_ATS__No_of_openings__c != null
                 ? Integer.valueOf(camp.R_ATS__No_of_openings__c)
@@ -726,7 +739,7 @@ public with sharing class JobListingService {
         s.id = c.Id;
         s.title = c.Name;
         s.ref = String.valueOf(c.R_ATS__Job_Reference_Number__c);
-        s.type = (c.RecordType != null) ? c.RecordType.DeveloperName : '';
+        s.type = String.isNotBlank(c.Type) ? c.Type : '';
         s.dept = c.Department__c;
         s.location = c.R_ATS__Location__c != null ? c.R_ATS__Location__c : '';
         s.status = derivePortalStatus(c.Status, c.IsActive);
@@ -735,7 +748,7 @@ public with sharing class JobListingService {
         s.deadline = c.EndDate;
         s.applicants = c.NumberOfContacts != null ? c.NumberOfContacts : 0;
         s.openings = c.R_ATS__No_of_openings__c != null ? Integer.valueOf(c.R_ATS__No_of_openings__c) : 0;
-        s.salary = String.valueOf(c.R_ATS__Salary__c);
+        s.salary = formatSalaryRange(c.R_ATS__Minimum_Salary__c, c.R_ATS__Maximum_Salary__c, c.R_ATS__Salary__c);
         s.billRate = c.R_ATS__Bill_Rate__c;
         s.payRate = c.R_ATS__Pay_Rate__c;
         s.source = c.Source__c;
@@ -768,6 +781,25 @@ public with sharing class JobListingService {
         if (sfSt == 'Aborted') return 'On Hold';
         if (sfSt == 'Completed') return 'Closed';
         return 'Draft';
+    }
+
+    private static String formatSalaryRange(Decimal minSalary, Decimal maxSalary, Decimal fallbackSalary) {
+        if (minSalary != null && maxSalary != null) {
+            return formatSalaryValue(minSalary) + ' - ' + formatSalaryValue(maxSalary);
+        }
+        if (minSalary != null) return formatSalaryValue(minSalary) + '+';
+        if (maxSalary != null) return formatSalaryValue(maxSalary);
+        if (fallbackSalary != null) return formatSalaryValue(fallbackSalary);
+        return '';
+    }
+
+    private static String formatSalaryValue(Decimal value) {
+        if (value == null) return '';
+        Decimal rounded = value.setScale(0);
+        if (rounded >= 1000) {
+            return '$' + String.valueOf((rounded / 1000).setScale(0)) + 'k';
+        }
+        return '$' + String.valueOf(rounded);
     }
 
     private static String buildStatusFilter(String portalSt) {
@@ -822,6 +854,15 @@ public with sharing class JobListingService {
     }
 
     /** Link Skill Library records via junction */
+    private static String skillsToText(List<String> skills) {
+        if (skills == null || skills.isEmpty()) return null;
+        List<String> cleaned = new List<String>();
+        for (String skill : skills) {
+            if (String.isNotBlank(skill)) cleaned.add(skill.trim());
+        }
+        return cleaned.isEmpty() ? null : String.join(cleaned, ', ');
+    }
+
     private static void linkSkillCodes(Id cId, List<String> names) {
         List<R_ATS__Topic_Library__c> libs = [
             SELECT Id FROM R_ATS__Topic_Library__c WHERE Name IN :names
@@ -917,5 +958,15 @@ public with sharing class JobListingService {
         if (String.isNotBlank(city)) parts.add(city);
         if (String.isNotBlank(state)) parts.add(state);
         return String.join(parts, ', ');
+    }
+
+    private static Id getJobCampaignRecordTypeId() {
+        Schema.RecordTypeInfo info = Schema.SObjectType.Campaign
+            .getRecordTypeInfosByDeveloperName()
+            .get('Job_Campaign');
+        if (info == null) {
+            throw new AuraHandledException('Campaign Record Type Job_Campaign not found');
+        }
+        return info.getRecordTypeId();
     }
 }

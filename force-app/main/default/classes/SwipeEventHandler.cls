@@ -44,10 +44,10 @@ public with sharing class SwipeEventHandler {
         // TASK US-041-BE-022: Update Contact swipe statistics
         updateCandidateStatistics(candidateIds, newSwipes);
         
-        // Add right-swiped candidates to employer talent pools
-        // This integrates with US-045: Automated Talent Pool Formation
+        // Add right-swiped candidates to employer Talent League.
+        // Uses story object structure: Talent_League__c + League_Membership__c.
         if (!rightSwipes.isEmpty()) {
-            TalentPoolService.addCandidatesToPools(rightSwipes);
+            LeagueMembershipService.addRightSwipesToLeague(rightSwipes);
         }
     }
     

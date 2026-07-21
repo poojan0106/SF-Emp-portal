@@ -134,7 +134,8 @@ public with sharing class EmployerMatchingService {
         String whereClause = 
             // 'RecordType.DeveloperName = \'Employer\' ' +
                             'Is_Active__c = true ' +
-                            'AND Profile_Completeness__c >= 50';
+                            'AND Profile_Completeness__c >= 50 ' +
+                            'AND Id IN (SELECT Employer__c FROM Campaign WHERE Employer__c != null AND IsActive = true AND Status = \'Active\')';
         
         // Exclude already swiped employers
         if (!excludedIds.isEmpty()) {
@@ -150,7 +151,8 @@ public with sharing class EmployerMatchingService {
         // Build full query
         String query = 
             'SELECT Id, Name, Industry, Employee_Count__c, Description, ' +
-            'Logo_URL__c, Company_Values__c, Typical_Roles__c, ' +
+            'Logo_URL__c, Company_Culture__c, Company_Values__c, Company_Size__c, Typical_Roles__c, ' +
+            'Remote_Work_Policy__c, Why_Join__c, ' +
             'Overall_Sentiment_Score__c, Salary_Range_Min__c, Salary_Range_Max__c, ' +
             'Hiring_Intent_Score__c, Culture_Highlights__c, Has_Remote_Positions__c, ' +
             'BillingCity, BillingState ' +
@@ -184,6 +186,10 @@ public with sharing class EmployerMatchingService {
             card.logoUrl = emp.Logo_URL__c;
             card.industry = emp.Industry;
             card.description = emp.Description;
+            card.companyCulture = emp.Company_Culture__c;
+            card.companySize = emp.Company_Size__c;
+            card.remoteWorkPolicy = emp.Remote_Work_Policy__c;
+            card.whyJoin = emp.Why_Join__c;
             
             // Formatted fields
             card.employeeCount = formatEmployeeCount(emp.Employee_Count__c);

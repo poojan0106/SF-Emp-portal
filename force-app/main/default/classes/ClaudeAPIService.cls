@@ -7,6 +7,58 @@ public with sharing class ClaudeAPIService {
     private static final String API_ENDPOINT = 'https://api.anthropic.com/v1/messages';
     private static final String API_VERSION = '2023-06-01';
     private static final String DEFAULT_MODEL = 'claude-sonnet-4-20250514';
+
+    /**
+     * Generic Claude chat API used by FlintChatController.
+     */
+    public static ClaudeResponse chat(
+        String systemPrompt,
+        List<Map<String, String>> messages,
+        Decimal temperature,
+        Integer maxTokens
+    ) {
+        HttpResponse response = callClaudeAPI(systemPrompt, messages, temperature, maxTokens);
+        return parseResponse(response, '0');
+    }
+
+    /**
+     * Generic structured extraction helper used by Flint helpers/controllers.
+     * Returns parsed JSON object, or empty map on API/parse failure.
+     */
+    public static Map<String, Object> extractStructuredData(String sourceText, String extractionPrompt) {
+        try {
+            String prompt = String.isBlank(extractionPrompt)
+                ? 'Extract structured data from this text. Return ONLY valid JSON.'
+                : extractionPrompt;
+
+            List<Map<String, String>> messages = new List<Map<String, String>>{
+                new Map<String, String>{
+                    'role' => 'user',
+                    'content' => prompt + '\n\nTEXT:\n' + (sourceText == null ? '' : sourceText)
+                }
+            };
+
+            ClaudeResponse response = chat(
+                'You are a structured data extraction assistant. Return ONLY valid JSON. No markdown. No explanation.',
+                messages,
+                0.1,
+                1000
+            );
+
+            if (String.isBlank(response.content)) {
+                return new Map<String, Object>();
+            }
+
+            String cleaned = cleanJsonResponse(response.content);
+            Object parsed = JSON.deserializeUntyped(cleaned);
+            if (parsed instanceof Map<String, Object>) {
+                return (Map<String, Object>) parsed;
+            }
+        } catch (Exception e) {
+            System.debug(LoggingLevel.ERROR, 'Structured extraction failed: ' + e.getMessage());
+        }
+        return new Map<String, Object>();
+    }
     
     /**
      * Generate job response from Claude
@@ -218,21 +270,20 @@ public with sharing class ClaudeAPIService {
         
         // Add recent messages from context
         if (ctx != null && ctx.recentMessages != null && !ctx.recentMessages.isEmpty()) {
+            Boolean hasUserStartedHistory = false;
             for (Chat_Interaction__c msg : ctx.recentMessages) {
                 String role = msg.Message_Type__c == 'User' ? 'user' : 'assistant';
+                if (!hasUserStartedHistory && role == 'assistant') {
+                    continue;
+                }
+                if (role == 'user') {
+                    hasUserStartedHistory = true;
+                }
                 messages.add(new Map<String, String>{
                     'role' => role,
                     'content' => msg.Message_Content__c
                 });
             }
-        } else if (ctx == null || ctx.recentMessages == null || ctx.recentMessages.isEmpty()) {
-            // If no message history, add initial greeting as context for Claude
-            String initialGreeting = 'Hi! I\'m Flint, your AI recruitment consultant. I\'m here to help you create a compelling job posting. Tell me about the role you\'re hiring for.';
-            messages.add(new Map<String, String>{
-                'role' => 'assistant',
-                'content' => initialGreeting
-            });
-            System.debug('Added initial greeting to message history');
         }
                 
         // Add current user message
@@ -287,6 +338,52 @@ public with sharing class ClaudeAPIService {
         Http http = new Http();
         return http.send(req);
     }
+
+    private static HttpResponse callClaudeAPI(
+        String systemPrompt,
+        List<Map<String, String>> messages,
+        Decimal temperature,
+        Integer maxTokens
+    ) {
+        HttpRequest req = new HttpRequest();
+        req.setEndpoint(API_ENDPOINT);
+        req.setMethod('POST');
+        req.setHeader('Content-Type', 'application/json');
+        req.setHeader('x-api-key', getAPIKey());
+        req.setHeader('anthropic-version', API_VERSION);
+        req.setTimeout(60000);
+
+        List<Map<String, Object>> apiMessages = new List<Map<String, Object>>();
+        if (messages != null) {
+            for (Map<String, String> msg : messages) {
+                if (msg == null || String.isBlank(msg.get('content'))) continue;
+                String role = msg.get('role') == 'assistant' ? 'assistant' : 'user';
+                apiMessages.add(new Map<String, Object>{
+                    'role' => role,
+                    'content' => msg.get('content')
+                });
+            }
+        }
+        if (apiMessages.isEmpty()) {
+            apiMessages.add(new Map<String, Object>{
+                'role' => 'user',
+                'content' => ''
+            });
+        }
+
+        Map<String, Object> requestBody = new Map<String, Object>{
+            'model' => DEFAULT_MODEL,
+            'max_tokens' => maxTokens == null ? 1024 : maxTokens,
+            'temperature' => temperature == null ? 0.3 : temperature,
+            'system' => String.isBlank(systemPrompt) ? 'You are Flint, an AI recruitment assistant.' : systemPrompt,
+            'messages' => apiMessages
+        };
+
+        req.setBody(JSON.serialize(requestBody));
+
+        Http http = new Http();
+        return http.send(req);
+    }
     
     /**
      * Parse Claude API response
@@ -314,6 +411,7 @@ public with sharing class ClaudeAPIService {
                     result.inputTokens = (Integer) usage.get('input_tokens');
                     result.outputTokens = (Integer) usage.get('output_tokens');
                     result.totalTokens = result.inputTokens + result.outputTokens;
+                    result.tokensUsed = result.totalTokens;
                 }
                 
                 // Check for forbidden keywords (off-script detection)
@@ -332,9 +430,30 @@ public with sharing class ClaudeAPIService {
             System.debug(LoggingLevel.ERROR, 'Claude API Error: ' + response.getStatusCode());
             result.content = 'I apologize, but I\'m having trouble connecting. Please try again.';
             result.error = 'API Error: ' + response.getStatusCode();
+            result.tokensUsed = 0;
         }
         
         return result;
+    }
+
+    private static String cleanJsonResponse(String raw) {
+        String cleaned = raw == null ? '' : raw.trim();
+        if (cleaned.startsWith('```json')) {
+            cleaned = cleaned.replace('```json', '').trim();
+        }
+        if (cleaned.startsWith('```')) {
+            cleaned = cleaned.replace('```', '').trim();
+        }
+        if (cleaned.endsWith('```')) {
+            cleaned = cleaned.substring(0, cleaned.length() - 3).trim();
+        }
+
+        Integer startIndex = cleaned.indexOf('{');
+        Integer endIndex = cleaned.lastIndexOf('}');
+        if (startIndex >= 0 && endIndex > startIndex) {
+            cleaned = cleaned.substring(startIndex, endIndex + 1);
+        }
+        return cleaned;
     }
     
     /**
@@ -369,6 +488,7 @@ public with sharing class ClaudeAPIService {
         result.inputTokens = 0;
         result.outputTokens = 0;
         result.totalTokens = 0;
+        result.tokensUsed = 0;
         result.extractedData = new Map<String, Object>();
         return result;
     }
@@ -376,7 +496,7 @@ public with sharing class ClaudeAPIService {
     /**
      * Generate fallback response when Claude goes off-script
      */
-    private static ClaudeResponse generateFallbackResponse(String questionCount) {
+    public static ClaudeResponse generateFallbackResponse(String questionCount) {
         ClaudeResponse result = new ClaudeResponse();
         
         Integer qNum = 0;
@@ -401,6 +521,7 @@ public with sharing class ClaudeAPIService {
         result.inputTokens = 0;
         result.outputTokens = 0;
         result.totalTokens = 0;
+        result.tokensUsed = 0;
         result.extractedData = new Map<String, Object>();
         
         return result;
@@ -436,6 +557,7 @@ public with sharing class ClaudeAPIService {
         public Integer inputTokens;
         public Integer outputTokens;
         public Integer totalTokens;
+        public Integer tokensUsed;
         public String error;
         public Map<String, Object> extractedData = new Map<String, Object>();
     }

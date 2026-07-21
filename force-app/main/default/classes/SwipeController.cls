@@ -475,6 +475,10 @@ global with sharing class SwipeController {
         public String       industry;
         public String       employeeCount;
         public String       description;
+        public String       companyCulture;
+        public String       companySize;
+        public String       remoteWorkPolicy;
+        public String       whyJoin;
         public List<String> highlights;
         public List<String> values;
         public String       typicalRoles;

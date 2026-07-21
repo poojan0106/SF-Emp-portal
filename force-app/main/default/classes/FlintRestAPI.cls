@@ -347,6 +347,9 @@ global with sharing class FlintRestAPI {
                     
                     // Extract job details ONE TIME with all messages
                     Map<String, Object> jobDetails = ClaudeAPIService.extractJobDetailsFromMessages(messageHistory);
+                    if (jobDetails == null || jobDetails.isEmpty() || !jobDetails.containsKey('job_title')) {
+                        jobDetails = buildJobDetailsFromScriptedAnswers(allMessages);
+                    }
                     
                     System.debug('📋 Extracted job details: ' + jobDetails.keySet());
                     
@@ -477,6 +480,104 @@ global with sharing class FlintRestAPI {
         }
     }
     
+    private static Map<String, Object> buildJobDetailsFromScriptedAnswers(List<Chat_Interaction__c> messages) {
+        List<String> answers = new List<String>();
+        for (Chat_Interaction__c msg : messages) {
+            if (msg.Message_Type__c == 'User' && String.isNotBlank(msg.Message_Content__c)) {
+                answers.add(msg.Message_Content__c.trim());
+            }
+        }
+
+        Map<String, Object> jobDetails = new Map<String, Object>();
+        if (answers.isEmpty()) return jobDetails;
+
+        String title = answers[0];
+        jobDetails.put('job_title', String.isBlank(title) ? 'New Position' : title.trim());
+
+        String seniority = answers.size() > 1 ? findSeniority(answers[1]) : null;
+        if (String.isNotBlank(seniority)) jobDetails.put('seniority_level', seniority);
+
+        if (answers.size() > 2) jobDetails.put('must_have_skills', splitCsv(answers[2]));
+        if (answers.size() > 3) jobDetails.put('nice_to_have_skills', splitCsv(answers[3]));
+        if (answers.size() > 4) {
+            Map<String, Decimal> salary = parseSalaryRange(answers[4]);
+            if (salary.containsKey('min')) jobDetails.put('salary_min', salary.get('min'));
+            if (salary.containsKey('max')) jobDetails.put('salary_max', salary.get('max'));
+        }
+        if (answers.size() > 5) {
+            jobDetails.put('timeline_days', parseTimelineDays(answers[5]));
+            jobDetails.put('urgency', parseUrgency(answers[5]));
+        }
+        if (answers.size() > 6) jobDetails.put('Employment_Type', normalizeEmploymentType(answers[6]));
+        if (answers.size() > 7) jobDetails.put('culture_notes', answers[7]);
+        if (answers.size() > 8) jobDetails.put('location', answers[8]);
+
+        return jobDetails;
+    }
+
+    private static String findSeniority(String value) {
+        String lower = String.isBlank(value) ? '' : value.toLowerCase();
+        if (lower.contains('executive')) return 'Executive';
+        if (lower.contains('lead')) return 'Lead';
+        if (lower.contains('senior')) return 'Senior';
+        if (lower.contains('junior')) return 'Junior';
+        if (lower.contains('mid')) return 'Mid';
+        return null;
+    }
+
+    private static List<Object> splitCsv(String value) {
+        List<Object> output = new List<Object>();
+        if (String.isBlank(value)) return output;
+        for (String part : value.split('[,;\\n]')) {
+            String item = part.trim();
+            if (String.isNotBlank(item)) output.add(item);
+        }
+        return output;
+    }
+
+    private static Map<String, Decimal> parseSalaryRange(String value) {
+        Map<String, Decimal> salary = new Map<String, Decimal>();
+        if (String.isBlank(value)) return salary;
+        Matcher matcher = Pattern.compile('(\\d+[\\d,]*)').matcher(value);
+        List<Decimal> values = new List<Decimal>();
+        while (matcher.find()) {
+            String raw = matcher.group(1).replace(',', '');
+            Decimal parsed = Decimal.valueOf(raw);
+            if (value.toLowerCase().contains('k') && parsed < 1000) parsed *= 1000;
+            values.add(parsed);
+        }
+        if (!values.isEmpty()) salary.put('min', values[0]);
+        if (values.size() > 1) salary.put('max', values[1]);
+        return salary;
+    }
+
+    private static Integer parseTimelineDays(String value) {
+        if (String.isBlank(value)) return null;
+        String lower = value.toLowerCase();
+        if (lower.contains('immediate')) return 14;
+        if (lower.contains('moderate')) return 30;
+        if (lower.contains('flexible')) return 45;
+        Matcher matcher = Pattern.compile('(\\d+)').matcher(lower);
+        if (matcher.find()) return Integer.valueOf(matcher.group(1));
+        return null;
+    }
+
+    private static String parseUrgency(String value) {
+        if (String.isBlank(value)) return null;
+        String lower = value.toLowerCase();
+        if (lower.contains('immediate') || lower.contains('0-2')) return 'Critical';
+        if (lower.contains('moderate') || lower.contains('2-4')) return 'Medium';
+        if (lower.contains('flexible') || lower.contains('1+')) return 'Low';
+        return null;
+    }
+
+    private static String normalizeEmploymentType(String value) {
+        String lower = String.isBlank(value) ? '' : value.toLowerCase();
+        if (lower.contains('contract')) return 'Contract';
+        if (lower.contains('temp')) return 'Temporary';
+        return 'Permanent';
+    }
+
     private static String generateSessionId() {
         return 'FLINT-' + String.valueOf(DateTime.now().getTime()) + '-' + 
                EncodingUtil.convertToHex(Crypto.generateAesKey(128)).substring(0, 8);

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Average_Time_To_Decision_Hours__c</fullName>
+    <description>Average hours between reveal request and candidate approve/reject decision.</description>
+    <externalId>false</externalId>
+    <label>Average Time To Decision Hours</label>
+    <precision>8</precision>
+    <required>false</required>
+    <scale>2</scale>
+    <trackTrending>false</trackTrending>
+    <type>Number</type>
+    <unique>false</unique>
+</CustomField>

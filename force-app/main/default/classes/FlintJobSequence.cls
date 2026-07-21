@@ -5,7 +5,7 @@ public class FlintJobSequence {
     
     public static final List<String> JOB_INTAKE_QUESTIONS = new List<String>{
         'Hi! I\'m Flint, your AI recruitment consultant. I\'m here to help you create a compelling job posting. Tell me about the role you\'re hiring for.',
-        'What\'s the job title and seniority level (Junior, Mid, Senior, Lead, Executive)?',
+        'What\'s the seniority level (Junior, Mid, Senior, Lead, Executive)?',
         'What are the must-have skills for this role?',
         'What nice-to-have skills would be a bonus?',
         'What\'s the salary range? I can provide market recommendations.',

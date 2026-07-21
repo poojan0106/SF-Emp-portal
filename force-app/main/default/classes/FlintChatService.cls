@@ -53,14 +53,19 @@ public with sharing class FlintChatService {
         
         Chat_Interaction__c interaction = interactions[0];
         
-        // Build chat context
-        ChatContext ctx = buildChatContext(interaction.Account__c, interactionId);
-        
-        // Call Claude API
+        Integer nextQuestionIndex = qNum + 1;
+
+        // Job intake questions are fixed. Do not call Claude just to ask the next scripted question.
         Long startTime = System.currentTimeMillis();
-        ClaudeAPIService.ClaudeResponse aiResponse = ClaudeAPIService.generateJobResponse(
-            userMessage, ctx, conversationType, currentQuestionCount
-        );
+        ClaudeAPIService.ClaudeResponse aiResponse;
+        if (conversationType == 'Job_Intake') {
+            aiResponse = ClaudeAPIService.generateFallbackResponse(String.valueOf(nextQuestionIndex));
+        } else {
+            ChatContext ctx = buildChatContext(interaction.Account__c, interactionId);
+            aiResponse = ClaudeAPIService.generateJobResponse(
+                userMessage, ctx, conversationType, currentQuestionCount
+            );
+        }
         Long responseTime = System.currentTimeMillis() - startTime;
         
         // Get session data from interaction
@@ -89,7 +94,7 @@ public with sharing class FlintChatService {
         session.messageCount++;
         session.lastActivity = DateTime.now();
         
-        String nextQuestionCount = String.valueOf(qNum + 1);
+        String nextQuestionCount = String.valueOf(nextQuestionIndex);
         
         System.debug('📤 Response prepared');
         System.debug('   Current: Q' + qNum);
@@ -99,8 +104,8 @@ public with sharing class FlintChatService {
         return new FlintResponse(
             interactionId,
             aiResponse.content,
-            detectInputType(qNum, aiResponse.content),
-            getQuickReplies(qNum),
+            detectInputType(nextQuestionIndex, aiResponse.content),
+            getQuickReplies(nextQuestionIndex),
             session.messageCount,
             nextQuestionCount,
             responseTime
@@ -157,7 +162,8 @@ public with sharing class FlintChatService {
             SELECT Id, Message_Type__c, Message_Content__c, Timestamp__c
             FROM Chat_Interaction__c
             WHERE Chat_Interaction__c = :interactionId  // VERIFY THIS FIELD NAME IN YOUR SCHEMA
-            ORDER BY Timestamp__c DESC
+            AND Message_Type__c IN ('User', 'Assistant')
+            ORDER BY Timestamp__c ASC
             LIMIT 5
         ];
         

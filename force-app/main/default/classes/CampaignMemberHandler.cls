@@ -159,7 +159,7 @@
 
         for (CampaignMember member : newMembers) {
             CampaignMember oldMember = oldMap.get(member.Id);
-            if (oldMember != null && member.Status != oldMember.Status && member.Status != 'Interview_Requested') {
+            if (oldMember != null && member.Status != oldMember.Status && member.Status != 'Interview Requested') {
                 changedMemberIds.add(member.Id);
             }
         }

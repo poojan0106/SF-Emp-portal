@@ -78,15 +78,16 @@ global without sharing class EmployerDashboardController {
             // Get metrics
             data.activeJobs = [SELECT COUNT() FROM Campaign 
                 WHERE Employer__c = :accountId 
-                AND RecordType.DeveloperName = 'Talent_Pool' 
+                AND Status = 'Active'
                 AND IsActive = true];
             
             System.debug('Active Jobs: ' + data.activeJobs);
             
             data.talentPoolSize = [SELECT COUNT() FROM CampaignMember 
                 WHERE Campaign.Employer__c = :accountId 
-                AND Campaign.RecordType.DeveloperName = 'Talent_Pool'
-                AND Status = 'Interested'];
+                AND Campaign.Status = 'Active'
+                AND Campaign.IsActive = true
+                AND Status = 'In League'];
             
             System.debug('Talent Pool Size: ' + data.talentPoolSize);
             
@@ -95,27 +96,37 @@ global without sharing class EmployerDashboardController {
             
             data.newCandidatesThisWeek = [SELECT COUNT() FROM CampaignMember 
                 WHERE Campaign.Employer__c = :accountId 
-                AND Campaign.RecordType.DeveloperName = 'Talent_Pool'
+                AND Campaign.Status = 'Active'
+                AND Campaign.IsActive = true
+                AND Status = 'In League'
                 AND Interest_Date__c >= :weekAgo];
             
             System.debug('New Candidates This Week: ' + data.newCandidatesThisWeek);
             
-            data.pendingInterviews = [SELECT COUNT() FROM CampaignMember 
-                WHERE Campaign.Employer__c = :accountId 
-                AND Status = 'Interview_Requested'];
+            DateTime nowDateTime = DateTime.now();
+            Integer pendingInterviewRequests = [SELECT COUNT() FROM CampaignMember
+                WHERE Campaign.Employer__c = :accountId
+                AND Status = 'Interview Requested'];
+            Integer futureScheduledInterviews = [SELECT COUNT() FROM Rescue_Opportunity__c
+                WHERE Account__c = :accountId
+                AND Status__c IN ('Scheduled', 'Confirmed')
+                AND Interview_Date__c >= :nowDateTime];
+            data.pendingInterviews = pendingInterviewRequests + futureScheduledInterviews;
             
             System.debug('Pending Interviews: ' + data.pendingInterviews);
             
             data.pendingOffers = [SELECT COUNT() FROM CampaignMember 
                 WHERE Campaign.Employer__c = :accountId 
-                AND Status = 'Offered'];
+                AND Status = 'Interview Confirmed'];
             System.debug('Pending Offers: ' + data.pendingOffers);
             
             data.readyForInterview = [SELECT COUNT() FROM CampaignMember 
                 WHERE Campaign.Employer__c = :accountId 
+                AND Campaign.Status = 'Active'
+                AND Campaign.IsActive = true
                 AND AI_Match_Score__c >= 80
                 AND Interview_Requested__c = false
-                AND Status = 'Interested'];
+                AND Status = 'In League'];
 
 			System.debug('Ready for Interview: ' + data.readyForInterview);
             
@@ -155,20 +166,33 @@ global without sharing class EmployerDashboardController {
             
             // New candidates
             for (CampaignMember member : [
-                SELECT Id, Contact.FirstName, Interest_Date__c, Campaign.Name
+                SELECT Id, Contact.FirstName, Interest_Date__c, CreatedDate, Status, Campaign.Name
                 FROM CampaignMember
                 WHERE Campaign.Employer__c = :accountId
-                AND Campaign.RecordType.DeveloperName = 'Talent_Pool'
+                AND Campaign.Status = 'Active'
+                AND Campaign.IsActive = true
+                AND Status IN ('In League', 'Interview Requested', 'Interview Confirmed', 'Interview Rejected', 'Reschedule Requested')
                 ORDER BY Interest_Date__c DESC
                 LIMIT :queryLimit
             ]) {
                 System.debug('Activity Member: ' + member.Id + ' - ' + member.Contact.FirstName);
-                activities.add(new ActivityItem(
-                    'candidate_interested',
-                    member.Contact.FirstName + ' is interested in ' + member.Campaign.Name,
-                    member.Interest_Date__c,
-                    member.Id
-                ));
+                String candidateName = String.isBlank(member.Contact.FirstName) ? 'Candidate' : member.Contact.FirstName;
+                String message = candidateName + ' joined ' + member.Campaign.Name + ' job campaign';
+                String type = 'candidate_joined';
+                if (member.Status == 'Reschedule Requested') {
+                    type = 'reschedule_requested';
+                    message = 'Reschedule requested from ' + candidateName + ' for ' + member.Campaign.Name + '. Please review.';
+                } else if (member.Status == 'Interview Confirmed') {
+                    type = 'interview_confirmed';
+                    message = candidateName + ' confirmed interview for ' + member.Campaign.Name;
+                } else if (member.Status == 'Interview Rejected') {
+                    type = 'interview_rejected';
+                    message = candidateName + ' rejected interview for ' + member.Campaign.Name;
+                } else if (member.Status == 'Interview Requested') {
+                    type = 'interview_requested';
+                    message = 'Interview requested for ' + candidateName + ' on ' + member.Campaign.Name;
+                }
+                activities.add(new ActivityItem(type, message, member.Interest_Date__c == null ? member.CreatedDate : member.Interest_Date__c, member.Id));
             }
             
             System.debug('Total activities: ' + activities.size());
@@ -199,9 +223,11 @@ global without sharing class EmployerDashboardController {
             // Check for candidates ready for interview
             Integer readyForInterview = [SELECT COUNT() FROM CampaignMember 
                 WHERE Campaign.Employer__c = :accountId 
+                AND Campaign.Status = 'Active'
+                AND Campaign.IsActive = true
                 AND AI_Match_Score__c >= 80
                 AND Interview_Requested__c = false
-                AND Status = 'Interested'];
+                AND Status = 'In League'];
             System.debug('Ready for Interview count: ' + readyForInterview);
             
             if (readyForInterview > 0) {
@@ -230,7 +256,7 @@ global without sharing class EmployerDashboardController {
             // Check if no active jobs
             Integer activeJobs = [SELECT COUNT() FROM Campaign 
                 WHERE Employer__c = :accountId 
-                AND RecordType.DeveloperName = 'Talent_Pool' 
+                AND Status = 'Active'
                 AND IsActive = true];
             System.debug('Active Jobs count: ' + activeJobs);
             
