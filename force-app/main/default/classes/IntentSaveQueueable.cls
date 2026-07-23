@@ -58,6 +58,7 @@ public class IntentSaveQueueable implements Queueable {
         Savepoint sp = Database.setSavepoint();
 
         try {
+            lockCandidateContact(contactId);
             Career_Intent__c intent = getLatestIntent(contactId);
             Boolean isNew = intent == null;
             if (isNew) {
@@ -138,6 +139,24 @@ public class IntentSaveQueueable implements Queueable {
         ];
 
         return intents.isEmpty() ? null : intents[0];
+    }
+
+    private void lockCandidateContact(String contactId) {
+        if (String.isBlank(contactId)) {
+            return;
+        }
+
+        try {
+            List<Contact> locks = [
+                SELECT Id
+                FROM Contact
+                WHERE Id = :contactId
+                LIMIT 1
+                FOR UPDATE
+            ];
+        } catch (Exception e) {
+            System.debug(LoggingLevel.WARN, 'Unable to lock Contact before intent save: ' + e.getMessage());
+        }
     }
 
     // Normalize salary input

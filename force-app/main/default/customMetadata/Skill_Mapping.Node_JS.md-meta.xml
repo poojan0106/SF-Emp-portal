@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomMetadata xmlns="http://soap.sforce.com/2006/04/metadata">
+    <label>Node JS</label>
+    <protected>false</protected>
+    <values>
+        <field>Original_Term__c</field>
+        <value xsi:type="xsd:string" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">Node JS</value>
+    </values>
+    <values>
+        <field>Canonical_Term__c</field>
+        <value xsi:type="xsd:string" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">Node.js</value>
+    </values>
+    <values>
+        <field>Category__c</field>
+        <value xsi:type="xsd:string" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">Backend</value>
+    </values>
+</CustomMetadata>

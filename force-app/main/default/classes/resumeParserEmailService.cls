@@ -5,10 +5,66 @@
  */
 global class resumeParserEmailService implements Messaging.InboundEmailHandler {
     
-    private static final String CLAUDE_MODEL = 'claude-sonnet-4-20250514';
+    private static final String CLAUDE_MODEL = 'claude-sonnet-5';
     private static final String CLAUDE_ENDPOINT = 'https://api.anthropic.com/v1/messages';
     private static final String DEFAULT_AWS_BUCKET_NAME = 'resonanttest2021';
     private static final String DEFAULT_AWS_HOST = 's3.us-west-2.amazonaws.com';
+    private String lastParseError;
+
+    public static UploadResult parseUploadedResumeForContact(Id contactId, String fileName, String base64Content, String contentType) {
+        UploadResult result = new UploadResult();
+        if (contactId == null) {
+            result.success = false;
+            result.message = 'Missing contactId';
+            return result;
+        }
+        if (String.isBlank(fileName) || String.isBlank(base64Content)) {
+            result.success = false;
+            result.message = 'Missing file';
+            return result;
+        }
+
+        String lowerName = fileName.toLowerCase();
+        if (!(lowerName.endsWith('.pdf') || lowerName.endsWith('.doc') || lowerName.endsWith('.docx'))) {
+            result.success = false;
+            result.message = 'Only PDF, DOC, and DOCX files are supported';
+            return result;
+        }
+
+        resumeParserEmailService parser = new resumeParserEmailService();
+        Blob fileBody = EncodingUtil.base64Decode(base64Content);
+        String ext = lowerName.substringAfterLast('.');
+        String pdfBase64 = base64Content;
+        String mediaType = 'application/pdf';
+
+        if (ext == 'doc' || ext == 'docx') {
+            pdfBase64 = parser.convertDocxToPdf(base64Content, fileName);
+            if (String.isBlank(pdfBase64)) {
+                result.success = false;
+                result.message = 'Unable to convert Word document to PDF for parsing';
+                return result;
+            }
+        }
+
+        Map<String, Object> parsedData = parser.parseResumeWithClaude(pdfBase64, mediaType);
+        if (parsedData == null) {
+            result.success = false;
+            result.message = String.isBlank(parser.lastParseError)
+                ? 'Unable to parse CV'
+                : 'Unable to parse CV: ' + parser.lastParseError;
+            return result;
+        }
+
+        parser.updateExistingContactFromParsedData(contactId, parsedData, fileName);
+        parser.saveActualResumeFile(contactId, fileName, fileBody);
+        parser.publishCVProcessingComplete(contactId, fileName);
+
+        result.success = true;
+        result.message = 'CV parsed successfully';
+        result.contactId = contactId;
+        result.data = parsedData;
+        return result;
+    }
     
     global Messaging.InboundEmailResult handleInboundEmail(
         Messaging.InboundEmail email, 
@@ -104,6 +160,7 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
             // Save the ACTUAL resume file to the Contact
             if (contactId != null) {
                 saveActualResumeFile(contactId, attachment.fileName, attachment.body);
+                publishCVProcessingComplete(contactId, attachment.fileName);
             }    
             
         } catch (Exception e) {
@@ -388,6 +445,7 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
         req.setHeader('Content-Type', 'application/json');
         req.setHeader('x-api-key', getClaudeAPIKey());
         req.setHeader('anthropic-version', '2023-06-01');
+        req.setHeader('anthropic-beta', 'pdfs-2024-09-25');
         req.setTimeout(120000);
         
         // Build request with document
@@ -427,14 +485,46 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
         
         if (res.getStatusCode() != 200) {
             System.debug('Claude API Error: ' + res.getBody());
+            lastParseError = 'Claude API ' + res.getStatusCode() + ': ' + limitErrorMessage(res.getBody());
             return null;
         }
         
-        // Extract JSON from response
-        Map<String, Object> response = (Map<String, Object>) JSON.deserializeUntyped(res.getBody());
-        List<Object> content = (List<Object>) response.get('content');
-        Map<String, Object> textBlock = (Map<String, Object>) content[0];
-        String jsonText = (String) textBlock.get('text');
+        // Extract JSON from response. Claude can return a 200 with no text block,
+        // so guard every response shape before cleaning/parsing.
+        String jsonText;
+        try {
+            Map<String, Object> response = (Map<String, Object>) JSON.deserializeUntyped(res.getBody());
+            List<Object> content = (List<Object>) response.get('content');
+            if (content == null || content.isEmpty()) {
+                lastParseError = 'Claude response missing content: ' + limitErrorMessage(res.getBody());
+                System.debug(lastParseError);
+                return null;
+            }
+
+            for (Object blockObject : content) {
+                if (blockObject == null) continue;
+                try {
+                    Map<String, Object> block = (Map<String, Object>) blockObject;
+                    String blockText = (String) block.get('text');
+                    if (String.isNotBlank(blockText)) {
+                        jsonText = blockText;
+                        break;
+                    }
+                } catch (Exception ignoredBlock) {
+                    System.debug('Skipping non-text Claude content block: ' + ignoredBlock.getMessage());
+                }
+            }
+        } catch (Exception responseParseException) {
+            lastParseError = 'Claude response parse failed: ' + responseParseException.getMessage();
+            System.debug(lastParseError);
+            return null;
+        }
+
+        if (String.isBlank(jsonText)) {
+            lastParseError = 'Claude response missing text block: ' + limitErrorMessage(res.getBody());
+            System.debug(lastParseError);
+            return null;
+        }
         
         // Clean JSON
         jsonText = jsonText.replace('```json', '').replace('```', '').trim();
@@ -442,11 +532,21 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
         Integer endIdx = jsonText.lastIndexOf('}');
         if (startIdx >= 0 && endIdx > startIdx) {
             jsonText = jsonText.substring(startIdx, endIdx + 1);
+        } else {
+            lastParseError = 'Claude response did not contain JSON: ' + limitErrorMessage(jsonText);
+            System.debug(lastParseError);
+            return null;
         }
         
         System.debug('Parsed JSON from Claude: ' + jsonText);
         
-        return (Map<String, Object>) JSON.deserializeUntyped(jsonText);
+        try {
+            return (Map<String, Object>) JSON.deserializeUntyped(jsonText);
+        } catch (Exception parseException) {
+            lastParseError = 'Claude returned invalid JSON: ' + parseException.getMessage();
+            System.debug('Claude JSON parse error: ' + parseException.getMessage());
+            return null;
+        }
     }
     
     /**
@@ -595,6 +695,76 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
         
         return con.Id;
     }
+
+    private void updateExistingContactFromParsedData(Id contactId, Map<String, Object> data, String fileName) {
+        List<Contact> contacts = [
+            SELECT Id, Description
+            FROM Contact
+            WHERE Id = :contactId
+            LIMIT 1
+        ];
+        if (contacts.isEmpty()) {
+            throw new ResumeParserConfigurationException('Contact not found');
+        }
+
+        List<Object> workHistory = (List<Object>) data.get('workHistory');
+        List<Object> education = (List<Object>) data.get('education');
+        List<Object> certifications = (List<Object>) data.get('certifications');
+        List<Object> skills = (List<Object>) data.get('skills');
+
+        Contact existingContact = contacts[0];
+        Contact con = new Contact(Id = contactId);
+
+        if (workHistory != null && !workHistory.isEmpty()) {
+            Map<String, Object> currentJob = (Map<String, Object>) workHistory[0];
+            con.Title = getString(currentJob, 'title');
+            con.R_ATS__Current_Designation__c = getString(currentJob, 'title');
+            con.R_ATS__Daxtra_Current_Company_Name__c = getString(currentJob, 'company');
+        }
+
+        if (education != null && !education.isEmpty()) {
+            Map<String, Object> firstEdu = (Map<String, Object>) education[0];
+            con.R_ATS__University__c = getString(firstEdu, 'institution');
+            con.R_ATS__Qualification__c = getString(firstEdu, 'degree');
+        }
+
+        if (skills != null && !skills.isEmpty()) {
+            List<String> skillList = new List<String>();
+            for (Object skill : skills) {
+                skillList.add(String.valueOf(skill));
+            }
+            con.R_ATS__Skills__c = String.join(skillList, '; ');
+        }
+
+        String summary = getString(data, 'summary');
+        if (String.isNotBlank(summary)) {
+            con.Description = String.isBlank(existingContact.Description)
+                ? summary
+                : summary + '\n\n' + existingContact.Description;
+        }
+
+        String cvText = getString(data, 'extractedText');
+        if (cvText != null) {
+            con.R_ATS__Text_CV__c = cvText;
+        }
+
+        con.LeadSource = 'Candidate Portal CV Upload';
+
+        update con;
+
+        Task task = new Task();
+        task.WhoId = contactId;
+        task.Subject = 'CV Uploaded: ' + fileName;
+        task.Description = 'CV uploaded from candidate portal and parsed automatically.\n\nSummary: ' + summary;
+        task.Status = 'Completed';
+        task.Priority = 'Normal';
+        task.ActivityDate = Date.today();
+        insert task;
+
+        createWorkHistoryRecords(contactId, workHistory);
+        createEducationRecords(contactId, education);
+        createCertificationRecords(contactId, certifications);
+    }
     
     /**
      * @description Save resume file to Salesforce Files
@@ -619,6 +789,14 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
         cdl.ShareType = 'V';
         cdl.Visibility = 'AllUsers';
         insert cdl;
+    }
+
+    private void publishCVProcessingComplete(Id contactId, String fileName) {
+        EventBus.publish(new CV_Processing_Complete__e(
+            Contact_Id__c = String.valueOf(contactId),
+            Source__c = 'Email Resume Parser',
+            File_Name__c = fileName
+        ));
     }
     /**
      * @description Create work history records (if you have a custom object)
@@ -870,6 +1048,11 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
         throw new ResumeParserConfigurationException('Claude API key not configured in Blakeney_Setting__mdt');
     }
 
+    private static String limitErrorMessage(String value) {
+        if (String.isBlank(value)) return 'No response body';
+        return value.length() > 500 ? value.substring(0, 500) : value;
+    }
+
     private static AwsSettings getAwsSettings() {
         Blakeney_Setting__mdt settings = getBlakeneySettings();
         if (settings == null ||
@@ -1003,6 +1186,13 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
         public String secretKey;
         public String bucketName;
         public String host;
+    }
+
+    global class UploadResult {
+        global Boolean success;
+        global String message;
+        global Id contactId;
+        global Map<String, Object> data;
     }
 
     public class ResumeParserConfigurationException extends Exception {}

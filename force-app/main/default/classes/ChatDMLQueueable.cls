@@ -134,7 +134,7 @@ public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
         }
     }
 
-    // Extract intent and update/create session-specific record
+    // Extract intent and update/create single candidate intent record
     private void extractAndUpdateSessionIntent(String contactId, String sessionId, String userMsg, String aiMsg, String answeredQuestionCount) {
         if (String.isNotBlank(answeredQuestionCount)) {
             Career_Intent__c mappedIntent = getSessionIntent(contactId, sessionId);
@@ -155,7 +155,7 @@ public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
             return;
         }
 
-        // Get or create intent for THIS SESSION ONLY
+        // Get or create one intent for this candidate. Existing fields stay untouched unless this answer updates them.
         Career_Intent__c intent = getSessionIntent(contactId, sessionId);
 
         Boolean changed = false;
@@ -346,8 +346,9 @@ public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
         return false;
     }
 
-    // Get intent for THIS SESSION ONLY (creates new if doesn't exist for session)
+    // Get latest candidate intent. Create only when candidate has no existing intent.
     private Career_Intent__c getSessionIntent(String contactId, String sessionId) {
+        lockCandidateContact(contactId);
         List<Career_Intent__c> intents = [
             SELECT Id, Contact__c, Candidate__c, Session_ID__c,
                    Short_Term_Goal__c, Medium_Term_Goal__c, Long_Term_Goal__c,
@@ -380,6 +381,24 @@ public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
         return newIntent;
     }
 
+    private void lockCandidateContact(String contactId) {
+        if (String.isBlank(contactId)) {
+            return;
+        }
+
+        try {
+            List<Contact> locks = [
+                SELECT Id
+                FROM Contact
+                WHERE Id = :contactId
+                LIMIT 1
+                FOR UPDATE
+            ];
+        } catch (Exception e) {
+            System.debug(LoggingLevel.WARN, 'Unable to lock Contact before intent save: ' + e.getMessage());
+        }
+    }
+
     // Check if message is a resume decision (not a real career answer)
     private Boolean isResumeDecision(String message) {
         if (String.isBlank(message)) return false;
@@ -394,7 +413,7 @@ public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
                lower.equals('no');
     }
 
-    // Copy existing Career Intent data to new session record
+    // Keep current session synced to the single candidate Career Intent record
     private void copyExistingDataToNewSession(String contactId, String sessionId) {
         try {
             System.debug('ðŸ“‹ Starting data copy for session: ' + sessionId);

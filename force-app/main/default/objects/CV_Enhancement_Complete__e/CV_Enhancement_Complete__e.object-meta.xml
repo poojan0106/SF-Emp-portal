@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomObject xmlns="http://soap.sforce.com/2006/04/metadata">
+    <deploymentStatus>Deployed</deploymentStatus>
+    <description>Raised when AI CV enhancement completes.</description>
+    <eventType>HighVolume</eventType>
+    <label>CV Enhancement Complete</label>
+    <pluralLabel>CV Enhancement Complete Events</pluralLabel>
+    <publishBehavior>PublishAfterCommit</publishBehavior>
+</CustomObject>
