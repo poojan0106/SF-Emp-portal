@@ -15,6 +15,8 @@ public class JobCreationService {
       Department__c = jobReq.dept,
       Type = jobReq.type,
       Employment_Type__c = jobReq.type,
+      Seniority_Level__c = normalizeSeniority(jobReq.getSeniorityValue()),
+      Job_Seniority__c = normalizeSeniority(jobReq.getSeniorityValue()),
       Employer__c = jobReq.accountId,
       Status = jobReq.isDraft ? 'Planned' : 'Active',
       StartDate = Date.today(),
@@ -65,6 +67,16 @@ public class JobCreationService {
       if (String.isNotBlank(skill)) cleaned.add(skill.trim());
     }
     return cleaned.isEmpty() ? null : String.join(cleaned, ', ');
+  }
+
+  private static String normalizeSeniority(String value) {
+    String lower = String.isBlank(value) ? '' : value.trim().toLowerCase();
+    if (lower == 'junior') return 'Junior';
+    if (lower == 'mid') return 'Mid';
+    if (lower == 'senior') return 'Senior';
+    if (lower == 'lead') return 'Lead';
+    if (lower == 'executive') return 'Executive';
+    return null;
   }
 
   private static void notifyInterestedCandidatesForNewJob(Campaign campaign, JobCreationRequest jobReq) {
@@ -120,11 +132,17 @@ public class JobCreationService {
       public String salMin;
       public String salMax;
       public String type;
+      public String seniority;
+      public String seniorityLevel;
       public String deadline;
       public String openings;
       public Boolean remote;
       public Boolean isDraft;
       public String accountId;
+
+      public String getSeniorityValue() {
+        return String.isNotBlank(seniority) ? seniority : seniorityLevel;
+      }
     }
     
     public class JobCreationResponse {

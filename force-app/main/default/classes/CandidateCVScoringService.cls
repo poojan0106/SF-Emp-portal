@@ -65,6 +65,8 @@ public class CandidateCVScoringService {
         addIfFieldExists(fields, Contact.SObjectType, 'R_ATS__Candidate_Summary__c');
         addIfFieldExists(fields, Contact.SObjectType, 'Candidate_Summary__c');
         addIfFieldExists(fields, Contact.SObjectType, 'Years_Experience__c');
+        addIfFieldExists(fields, Contact.SObjectType, 'R_ATS__Minimum_Salary__c');
+        addIfFieldExists(fields, Contact.SObjectType, 'R_ATS__Maximum_Salary__c');
         addIfFieldExists(fields, Contact.SObjectType, 'Min_Salary_Expectation__c');
         addIfFieldExists(fields, Contact.SObjectType, 'Max_Salary_Expectation__c');
 
@@ -112,17 +114,16 @@ public class CandidateCVScoringService {
         List<String> candidateSkills = parseSkills(candidateSkillsText);
         List<String> must = parseSkills(mustText);
         List<String> nice = parseSkills(niceText);
-        if (must.isEmpty() && nice.isEmpty()) return String.isBlank(candidateSkillsText) ? 10 : 30;
+        if (candidateSkills.isEmpty() || (must.isEmpty() && nice.isEmpty())) return 0;
 
         Decimal score = 0;
         if (!must.isEmpty()) score += 30 * matchRatio(candidateSkills, must);
         if (!nice.isEmpty()) score += 10 * matchRatio(candidateSkills, nice);
-        if (must.isEmpty() && !nice.isEmpty()) score += 20 * matchRatio(candidateSkills, nice);
         return clampPart(score, 40);
     }
 
     private static Decimal scoreExperience(Decimal years, String seniority) {
-        if (years == null) return 10;
+        if (years == null || String.isBlank(seniority)) return 0;
         String level = String.isBlank(seniority) ? '' : seniority.toLowerCase();
         Decimal target = 2;
         if (level.contains('mid')) target = 3;
@@ -133,29 +134,38 @@ public class CandidateCVScoringService {
     }
 
     private static Decimal scoreLocation(Contact candidate, String jobLocation) {
-        if (String.isBlank(jobLocation)) return 15;
+        if (String.isBlank(jobLocation)) return 0;
         String haystack = (String.valueOf(candidate.MailingCity) + ' ' +
             String.valueOf(candidate.MailingState) + ' ' + String.valueOf(candidate.MailingCountry)).toLowerCase();
+        if (String.isBlank(haystack.replace('null', '').trim())) return 0;
         for (String token : jobLocation.toLowerCase().split('[,;\\s]+')) {
             if (String.isNotBlank(token) && haystack.contains(token)) return 15;
         }
-        return 5;
+        return 0;
     }
 
     private static Decimal scoreSalary(Contact candidate, Campaign campaign) {
-        Decimal candidateMin = decimalValue(candidate, 'Min_Salary_Expectation__c');
-        Decimal candidateMax = decimalValue(candidate, 'Max_Salary_Expectation__c');
+        Decimal candidateMin = firstDecimalValue(candidate, new List<String>{
+            'R_ATS__Minimum_Salary__c',
+            'Min_Salary_Expectation__c',
+            'Minimum_Salary__c'
+        });
+        Decimal candidateMax = firstDecimalValue(candidate, new List<String>{
+            'R_ATS__Maximum_Salary__c',
+            'Max_Salary_Expectation__c',
+            'Maximum_Salary__c'
+        });
         Decimal jobMin = decimalValue(campaign, 'R_ATS__Minimum_Salary__c');
         Decimal jobMax = decimalValue(campaign, 'R_ATS__Maximum_Salary__c');
-        if (candidateMin == null && candidateMax == null) return 10;
-        if (jobMin == null && jobMax == null) return 10;
+        if (candidateMin == null && candidateMax == null) return 0;
+        if (jobMin == null && jobMax == null) return 0;
 
         Decimal low = candidateMin == null ? candidateMax : candidateMin;
         Decimal high = candidateMax == null ? candidateMin : candidateMax;
         Decimal jobLow = jobMin == null ? jobMax : jobMin;
         Decimal jobHigh = jobMax == null ? jobMin : jobMax;
         Boolean overlaps = low <= jobHigh && high >= jobLow;
-        return overlaps ? 15 : 5;
+        return overlaps ? 15 : 0;
     }
 
     private static String buildProtectedSummary(Contact candidate, ScoreResult result) {
@@ -236,6 +246,14 @@ public class CandidateCVScoringService {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    private static Decimal firstDecimalValue(SObject row, List<String> fieldNames) {
+        for (String fieldName : fieldNames) {
+            Decimal value = decimalValue(row, fieldName);
+            if (value != null) return value;
+        }
+        return null;
     }
 
     private class ScoreResult {

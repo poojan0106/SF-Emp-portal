@@ -191,6 +191,7 @@ public with sharing class TalentPoolService {
 
         // Insert new members
         System.debug('[TalentPoolService] Main pool members to insert=' + membersToInsert.size());
+        Set<Id> contactsToScore = new Set<Id>();
         if (!membersToInsert.isEmpty()) {
             Database.SaveResult[] mainResults = Database.insert(membersToInsert, false);
             List<CampaignMember> duplicateMembersToRepair = new List<CampaignMember>();
@@ -199,6 +200,9 @@ public with sharing class TalentPoolService {
             for (Integer i = 0; i < mainResults.size(); i++) {
                 if (mainResults[i].isSuccess()) {
                     System.debug('[TalentPoolService] ✓ INSERT SUCCESS for CampaignMember ID: ' + mainResults[i].getId());
+                    if (membersToInsert[i].ContactId != null) {
+                        contactsToScore.add(membersToInsert[i].ContactId);
+                    }
                 } else {
                     System.debug(LoggingLevel.WARN,
                         '[TalentPoolService] ✗ INSERT FAILED - Errors:');
@@ -223,6 +227,9 @@ public with sharing class TalentPoolService {
             for (Integer i = 0; i < updateResults.size(); i++) {
                 if (updateResults[i].isSuccess()) {
                     System.debug('[TalentPoolService] ✓ UPDATE SUCCESS for CampaignMember ID: ' + updateResults[i].getId());
+                    if (membersToUpdate[i].ContactId != null) {
+                        contactsToScore.add(membersToUpdate[i].ContactId);
+                    }
                 } else {
                     System.debug(LoggingLevel.WARN,
                         '[TalentPoolService] ✗ UPDATE FAILED - Errors:');
@@ -235,6 +242,14 @@ public with sharing class TalentPoolService {
         }
         
         // ═══════════════════════════════════════════════════════════════════
+        for (Id contactId : contactsToScore) {
+            try {
+                CandidateCVScoringService.scoreCampaignMembersForContact(contactId);
+            } catch (Exception scoreError) {
+                System.debug(LoggingLevel.WARN, 'Unable to score CampaignMembers for contact ' + contactId + ': ' + scoreError.getMessage());
+            }
+        }
+
         // TASK US-045-BE-030: DUAL MEMBERSHIP - Add to Sub-Pools
         // ═══════════════════════════════════════════════════════════════════
         

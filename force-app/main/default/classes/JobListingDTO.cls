@@ -12,6 +12,7 @@ public with sharing class JobListingDTO {
         @AuraEnabled public String ref;             // ← changed from jobReference
         @AuraEnabled public String type;            // ← changed from recordType
         @AuraEnabled public String dept;            // ← changed from department
+        @AuraEnabled public String seniority;
         @AuraEnabled public String location;
         @AuraEnabled public String status;
         @AuraEnabled public String campaignStatus;  // Keep internal SF status
@@ -111,6 +112,8 @@ public with sharing class JobListingDTO {
         @AuraEnabled public Boolean publishImmediately;
         
         // Legacy/unused fields - keep for backward compatibility
+        @AuraEnabled public String seniority;
+        @AuraEnabled public String seniorityLevel;
         @AuraEnabled public String street;
         @AuraEnabled public String city;
         @AuraEnabled public String state;

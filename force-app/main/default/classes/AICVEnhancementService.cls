@@ -29,7 +29,11 @@ public class AICVEnhancementService {
         putIfFieldExists(updateContact, Contact.SObjectType, 'Marketability_Score__c', marketabilityScore);
         update updateContact;
 
-        CandidateCVScoringService.scoreCampaignMembersForContact(con.Id);
+        try {
+            CandidateCVScoringService.scoreCampaignMembersForContact(con.Id);
+        } catch (Exception e) {
+            System.debug(LoggingLevel.WARN, 'CampaignMember scoring failed after enhancement; Contact enhancement kept: ' + e.getMessage());
+        }
         sendOnboardingInvitation(con.Id, con.Email, summary, normalizedSkills);
         publishEnhancementEvent(con.Id, String.isNotBlank(summary), String.isNotBlank(normalizedSkills));
     }
@@ -87,6 +91,8 @@ public class AICVEnhancementService {
         addIfFieldExists(fields, Contact.SObjectType, 'R_ATS__Skills__c');
         addIfFieldExists(fields, Contact.SObjectType, 'R_ATS__Text_CV__c');
         addIfFieldExists(fields, Contact.SObjectType, 'Years_Experience__c');
+        addIfFieldExists(fields, Contact.SObjectType, 'R_ATS__Minimum_Salary__c');
+        addIfFieldExists(fields, Contact.SObjectType, 'R_ATS__Maximum_Salary__c');
 
         String soql = 'SELECT ' + String.join(new List<String>(fields), ',') +
             ' FROM Contact WHERE Id = :contactId LIMIT 1';
@@ -158,15 +164,51 @@ public class AICVEnhancementService {
     }
 
     private static Decimal calculateMarketabilityScore(Contact con, String skills, String summary, String flags) {
-        Decimal score = 40;
-        if (String.isNotBlank(skills)) score += 25;
-        if (String.isNotBlank(summary)) score += 20;
-        if (String.isNotBlank(con.Email)) score += 5;
-        if (String.isNotBlank(con.MailingCity) || String.isNotBlank(con.MailingCountry)) score += 10;
-        if (String.isNotBlank(flags) && !flags.contains('No major risk')) score -= 10;
+        Decimal score = 0;
+        Integer skillCount = parseSkillCount(skills);
+        if (skillCount > 0) score += Math.min(30, skillCount * 4);
+
+        Decimal years = decimalValue(con, 'Years_Experience__c');
+        if (years != null && years > 0) score += Math.min(25, years * 5);
+
+        Integer workHistoryCount = countWorkHistory(con.Id);
+        Decimal completeness = 0;
+        if (String.isNotBlank(summary)) completeness += 5;
+        if (String.isNotBlank(con.Title)) completeness += 4;
+        if (String.isNotBlank(con.Email)) completeness += 3;
+        if (String.isNotBlank(con.MailingCity) || String.isNotBlank(con.MailingCountry)) completeness += 3;
+        if (decimalValue(con, 'R_ATS__Minimum_Salary__c') != null || decimalValue(con, 'R_ATS__Maximum_Salary__c') != null) completeness += 3;
+        if (workHistoryCount > 0) completeness += 2;
+        score += Math.min(20, completeness);
+
+        score += (String.isBlank(flags) || flags.contains('No major risk')) ? 15 : 7;
+
+        Decimal roleClarity = 0;
+        if (String.isNotBlank(con.Title)) roleClarity += 5;
+        if (workHistoryCount > 0) roleClarity += 5;
+        score += Math.min(10, roleClarity);
+
         if (score < 0) return 0;
         if (score > 100) return 100;
         return score;
+    }
+
+    private static Integer parseSkillCount(String skills) {
+        if (String.isBlank(skills)) return 0;
+        Integer count = 0;
+        for (String part : skills.split('[,;\\n]+')) {
+            if (String.isNotBlank(part)) count++;
+        }
+        return count;
+    }
+
+    private static Integer countWorkHistory(Id contactId) {
+        if (contactId == null || !Schema.getGlobalDescribe().containsKey('Work_History__c')) return 0;
+        try {
+            return Database.countQuery('SELECT COUNT() FROM Work_History__c WHERE Contact__c = :contactId');
+        } catch (Exception e) {
+            return 0;
+        }
     }
 
     private static void sendOnboardingInvitation(Id contactId, String email, String summary, String skills) {
@@ -276,6 +318,15 @@ public class AICVEnhancementService {
             if (parsed < 0) return 0;
             if (parsed > 100) return 100;
             return parsed.setScale(0);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static Decimal decimalValue(SObject row, String fieldName) {
+        try {
+            Object val = row.get(fieldName);
+            return val == null ? null : Decimal.valueOf(String.valueOf(val));
         } catch (Exception e) {
             return null;
         }

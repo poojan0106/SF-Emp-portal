@@ -112,6 +112,8 @@ public class IntentSaveQueueable implements Queueable {
                 update intent;
             }
 
+            syncContactSalary(contactId, intent.Min_Salary_Expactation__c, intent.Max_Salary_Expactation__c);
+
             System.debug((isNew ? 'Created' : 'Updated') + ' Career Intent record: ' + intent.Id);
 
         } catch (Exception e) {
@@ -156,6 +158,37 @@ public class IntentSaveQueueable implements Queueable {
             ];
         } catch (Exception e) {
             System.debug(LoggingLevel.WARN, 'Unable to lock Contact before intent save: ' + e.getMessage());
+        }
+    }
+
+    private void syncContactSalary(String contactId, Decimal minSalaryValue, Decimal maxSalaryValue) {
+        if (String.isBlank(contactId) || (minSalaryValue == null && maxSalaryValue == null)) {
+            return;
+        }
+
+        List<Contact> contacts = [
+            SELECT Id, R_ATS__Minimum_Salary__c, R_ATS__Maximum_Salary__c
+            FROM Contact
+            WHERE Id = :contactId
+            LIMIT 1
+        ];
+        if (contacts.isEmpty()) return;
+
+        Contact currentContact = contacts[0];
+        Contact updateContact = new Contact(Id = currentContact.Id);
+        Boolean changed = false;
+
+        if (minSalaryValue != null && currentContact.R_ATS__Minimum_Salary__c != minSalaryValue) {
+            updateContact.R_ATS__Minimum_Salary__c = minSalaryValue;
+            changed = true;
+        }
+        if (maxSalaryValue != null && currentContact.R_ATS__Maximum_Salary__c != maxSalaryValue) {
+            updateContact.R_ATS__Maximum_Salary__c = maxSalaryValue;
+            changed = true;
+        }
+
+        if (changed) {
+            update updateContact;
         }
     }
 

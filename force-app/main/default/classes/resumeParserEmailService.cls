@@ -621,7 +621,7 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
                 skillList.add(String.valueOf(skill));
             }
             // Assuming custom field exists:
-            con.R_ATS__Skills__c = String.join(skillList, '; ');
+            con.R_ATS__Skills__c = String.join(skillList, ', ');
         }
         
         // Summary
@@ -634,11 +634,9 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
             }
         }
         
-        // Total Years Experience
-        Object yearsExp = data.get('totalYearsExperience');
-        if (yearsExp != null) {
-            // Assuming custom field exists:
-            // con.Years_of_Experience__c = Decimal.valueOf(String.valueOf(yearsExp));
+        Decimal totalYearsExperience = parseDecimal(data.get('totalYearsExperience'));
+        if (totalYearsExperience != null) {
+            con.Years_Experience__c = totalYearsExperience;
         }
         
         // cvText
@@ -671,18 +669,14 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
         }
         
         // Create Task linked to Contact
-        Task task = new Task();
-        task.WhoId = con.Id;
-        task.Subject = 'Resume Received: ' + fileName;
-        task.Description = 'Resume received via email and parsed automatically.\n\n' +
-                          'Sender: ' + emailDetails.fromName + ' <' + emailDetails.fromAddress + '>\n' +
-                          'Subject: ' + emailDetails.subject + '\n\n' +
-                          'Summary: ' + summary;
-        task.Status = 'Completed';
-        task.Priority = 'Normal';
-        task.ActivityDate = Date.today();
-        insert task;
-        System.debug('Task created: ' + task.Id);
+        createResumeTaskIfMissing(
+            con.Id,
+            'Resume Received: ' + fileName,
+            'Resume received via email and parsed automatically.\n\n' +
+            'Sender: ' + emailDetails.fromName + ' <' + emailDetails.fromAddress + '>\n' +
+            'Subject: ' + emailDetails.subject + '\n\n' +
+            'Summary: ' + summary
+        );
                 
         // Create work history records if you have a custom object
         createWorkHistoryRecords(con.Id, workHistory);
@@ -733,7 +727,7 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
             for (Object skill : skills) {
                 skillList.add(String.valueOf(skill));
             }
-            con.R_ATS__Skills__c = String.join(skillList, '; ');
+            con.R_ATS__Skills__c = String.join(skillList, ', ');
         }
 
         String summary = getString(data, 'summary');
@@ -748,18 +742,20 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
             con.R_ATS__Text_CV__c = cvText;
         }
 
+        Decimal totalYearsExperience = parseDecimal(data.get('totalYearsExperience'));
+        if (totalYearsExperience != null) {
+            con.Years_Experience__c = totalYearsExperience;
+        }
+
         con.LeadSource = 'Candidate Portal CV Upload';
 
         update con;
 
-        Task task = new Task();
-        task.WhoId = contactId;
-        task.Subject = 'CV Uploaded: ' + fileName;
-        task.Description = 'CV uploaded from candidate portal and parsed automatically.\n\nSummary: ' + summary;
-        task.Status = 'Completed';
-        task.Priority = 'Normal';
-        task.ActivityDate = Date.today();
-        insert task;
+        createResumeTaskIfMissing(
+            contactId,
+            'CV Uploaded: ' + fileName,
+            'CV uploaded from candidate portal and parsed automatically.\n\nSummary: ' + summary
+        );
 
         createWorkHistoryRecords(contactId, workHistory);
         createEducationRecords(contactId, education);
@@ -771,6 +767,10 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
      */
     
     private void saveActualResumeFile(Id contactId, String fileName, Blob fileContent) {
+        if (hasExistingResumeFile(contactId, fileName)) {
+            System.debug('Resume file already linked to contact, skipping duplicate file: ' + fileName);
+            return;
+        }
 
         // Create ContentVersion with the ACTUAL file
         ContentVersion cv = new ContentVersion();
@@ -791,6 +791,43 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
         insert cdl;
     }
 
+    private Boolean hasExistingResumeFile(Id contactId, String fileName) {
+        if (contactId == null || String.isBlank(fileName)) return false;
+        List<ContentDocumentLink> links = [
+            SELECT Id
+            FROM ContentDocumentLink
+            WHERE LinkedEntityId = :contactId
+            AND ContentDocument.Title = :fileName
+            LIMIT 1
+        ];
+        return !links.isEmpty();
+    }
+
+    private void createResumeTaskIfMissing(Id contactId, String subject, String description) {
+        if (contactId == null || String.isBlank(subject)) return;
+        List<Task> existingTasks = [
+            SELECT Id
+            FROM Task
+            WHERE WhoId = :contactId
+            AND Subject = :subject
+            LIMIT 1
+        ];
+        if (!existingTasks.isEmpty()) {
+            System.debug('Resume task already exists, skipping duplicate task: ' + subject);
+            return;
+        }
+
+        Task task = new Task();
+        task.WhoId = contactId;
+        task.Subject = subject;
+        task.Description = description;
+        task.Status = 'Completed';
+        task.Priority = 'Normal';
+        task.ActivityDate = Date.today();
+        insert task;
+        System.debug('Resume task created: ' + task.Id);
+    }
+
     private void publishCVProcessingComplete(Id contactId, String fileName) {
         EventBus.publish(new CV_Processing_Complete__e(
             Contact_Id__c = String.valueOf(contactId),
@@ -808,23 +845,39 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
         
         // Example if you have Work_History__c custom object:
         
+        Set<String> existingKeys = new Set<String>();
+        for (Work_History__c existing : [
+            SELECT Name, Job_Title__c, Start_Date__c, End_Date__c
+            FROM Work_History__c
+            WHERE Contact__c = :contactId
+        ]) {
+            existingKeys.add(workHistoryKey(existing.Name, existing.Job_Title__c, existing.Start_Date__c, existing.End_Date__c));
+        }
+
         List<Work_History__c> workRecords = new List<Work_History__c>();
         
         for (Object jobObj : workHistory) {
             Map<String, Object> job = (Map<String, Object>) jobObj;
+            String company = getString(job, 'company');
+            String title = getString(job, 'title');
+            Date startDate = parseDate(getString(job, 'startDate'));
+            Date endDate = parseDate(getString(job, 'endDate'));
+            String key = workHistoryKey(company, title, startDate, endDate);
+            if (existingKeys.contains(key)) continue;
 
             Work_History__c wh = new Work_History__c();
             wh.Contact__c = contactId;
-            wh.Name = getString(job, 'company');
-            wh.Job_Title__c = getString(job, 'title');
-            wh.Start_Date__c = parseDate(getString(job, 'startDate'));
-            wh.End_Date__c = parseDate(getString(job, 'endDate'));
+            wh.Name = company;
+            wh.Job_Title__c = title;
+            wh.Start_Date__c = startDate;
+            wh.End_Date__c = endDate;
             wh.Responsibilities__c = getString(job, 'description');
             
             Map<String, Object> locationMap = (Map<String, Object>) job.get('location');
             wh.Work_Location__c = formatLocationAsText(locationMap);
         
             workRecords.add(wh);
+            existingKeys.add(key);
         }
         
         if (!workRecords.isEmpty()) {
@@ -834,6 +887,13 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
        
         
         System.debug('Work history parsing: ' + workHistory.size() + ' jobs found');
+    }
+
+    private String workHistoryKey(String company, String title, Date startDate, Date endDate) {
+        return normalizeKey(company) + '|' +
+            normalizeKey(title) + '|' +
+            String.valueOf(startDate) + '|' +
+            String.valueOf(endDate);
     }
     
     // Add this helper method to your class
@@ -857,14 +917,27 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
             return;
         }
     
+        Set<String> existingKeys = new Set<String>();
+        for (Certification__c existing : [
+            SELECT Name
+            FROM Certification__c
+            WHERE Contact__c = :contactId
+        ]) {
+            existingKeys.add(normalizeKey(existing.Name));
+        }
+
         List<Certification__c> certRecords = new List<Certification__c>();
         
         for (Object cert : certifications) {
+            String certName = String.valueOf(cert);
+            String key = normalizeKey(certName);
+            if (String.isBlank(key) || existingKeys.contains(key)) continue;
             
             Certification__c cer = new Certification__c();
             cer.Contact__c = contactId;
-            cer.Name = String.valueOf(cert);
+            cer.Name = certName;
             certRecords.add(cer);
+            existingKeys.add(key);
         }
 
         
@@ -886,19 +959,35 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
         
         // Example if you have Education__c custom object:
     
+        Set<String> existingKeys = new Set<String>();
+        for (Education__c existing : [
+            SELECT Institution__c, Name, Field_of_Study__c, Graduation_Year__c
+            FROM Education__c
+            WHERE Contact__c = :contactId
+        ]) {
+            existingKeys.add(educationKey(existing.Institution__c, existing.Name, existing.Field_of_Study__c, existing.Graduation_Year__c));
+        }
+
         List<Education__c> eduRecords = new List<Education__c>();
         
         for (Object eduObj : education) {
             Map<String, Object> edu = (Map<String, Object>) eduObj;
+            String institution = getString(edu, 'institution');
+            String degree = getString(edu, 'degree');
+            String major = getString(edu, 'major');
+            String graduationYear = getString(edu, 'graduationYear');
+            String key = educationKey(institution, degree, major, graduationYear);
+            if (existingKeys.contains(key)) continue;
             
             Education__c ed = new Education__c();
             ed.Contact__c = contactId;
-            ed.Institution__c = getString(edu, 'institution');
-            ed.Name = getString(edu, 'degree');
-            ed.Field_of_Study__c = getString(edu, 'major');
-            ed.Graduation_Year__c = getString(edu, 'graduationYear');
+            ed.Institution__c = institution;
+            ed.Name = degree;
+            ed.Field_of_Study__c = major;
+            ed.Graduation_Year__c = graduationYear;
             
             eduRecords.add(ed);
+            existingKeys.add(key);
         }
         
         if (!eduRecords.isEmpty()) {
@@ -908,6 +997,13 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
       
         
         System.debug('Education parsing: ' + education.size() + ' education records found');
+    }
+
+    private String educationKey(String institution, String degree, String major, String graduationYear) {
+        return normalizeKey(institution) + '|' +
+            normalizeKey(degree) + '|' +
+            normalizeKey(major) + '|' +
+            normalizeKey(graduationYear);
     }
     
     /**
@@ -966,6 +1062,7 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
             '- Extract EVERY job position from work/professional experience section\n' +
             '- Extract EVERY education entry (degrees, universities)\n' +
             '- Extract job locations (city, state, country)\n' +
+            '- Calculate total professional experience in years from work history dates and return numeric totalYearsExperience\n' +
             '- Convert job descriptions into numbered bullet points\n' +
             '- Do NOT skip any entries\n\n' +
             'Return ONLY a valid JSON object with this EXACT structure:\n' +
@@ -1007,11 +1104,12 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
             '1. Extract ALL jobs - this CV should have multiple positions\n' +
             '2. Extract ALL education - look for degrees, universities, graduation years\n' +
             '3. For each job, extract location (city, state, country) if mentioned\n' +
-            '4. Convert job descriptions into numbered bullet points (1. 2. 3. etc.)\n' +
-            '5. Use \\n to separate lines, description and sections in all text fields\n' +
-            '6. Convert month names to numbers (June=06, August=08)\n' +
-            '7. Use "" for missing strings, [] for missing arrays, {"city":"","state":"","country":""} for missing location\n' +
-            '8. For extractedText: Include the COMPLETE readable text from the CV\n' +
+            '4. totalYearsExperience must be a number based on workHistory dates. Use decimals when needed, e.g. 3.5. If unknown, use 0\n' +
+            '5. Convert job descriptions into numbered bullet points (1. 2. 3. etc.)\n' +
+            '6. Use \\n to separate lines, description and sections in all text fields\n' +
+            '7. Convert month names to numbers (June=06, August=08)\n' +
+            '8. Use "" for missing strings, [] for missing arrays, {"city":"","state":"","country":""} for missing location\n' +
+            '9. For extractedText: Include the COMPLETE readable text from the CV\n' +
             '   - Preserve all section headers (e.g., "EXPERIENCE", "EDUCATION", "SKILLS")\n' +
             '   - Use \\n for line breaks\n' +
             '   - Use \\n\\n for section breaks\n' +
@@ -1076,6 +1174,26 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
     private String getString(Map<String, Object> maps, String key) {
         Object value = maps.get(key);
         return value != null ? String.valueOf(value) : '';
+    }
+
+    private Decimal parseDecimal(Object value) {
+        if (value == null) return null;
+        try {
+            String text = String.valueOf(value).trim();
+            if (String.isBlank(text)) return null;
+            text = text.replace(',', '');
+            if (text.endsWith('+')) {
+                text = text.substring(0, text.length() - 1);
+            }
+            return Decimal.valueOf(text);
+        } catch (Exception e) {
+            System.debug('Error parsing decimal value: ' + String.valueOf(value));
+            return null;
+        }
+    }
+
+    private String normalizeKey(String value) {
+        return String.isBlank(value) ? '' : value.trim().toLowerCase();
     }
     
     private Date parseDate(String dateStr) {

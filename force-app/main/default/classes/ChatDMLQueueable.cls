@@ -144,6 +144,7 @@ public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
                 mappedIntent.Candidate__c = contactId;
                 mappedIntent.Last_Check_In__c = DateTime.now();
                 upsert mappedIntent;
+                syncContactSalary(contactId, mappedIntent.Min_Salary_Expactation__c, mappedIntent.Max_Salary_Expactation__c);
                 System.debug('Updated Career Intent by questionCount ' + answeredQuestionCount + ' for session: ' + sessionId);
             }
             return;
@@ -279,6 +280,7 @@ public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
             intent.Candidate__c = contactId;
             intent.Last_Check_In__c = DateTime.now();
             upsert intent;
+            syncContactSalary(contactId, intent.Min_Salary_Expactation__c, intent.Max_Salary_Expactation__c);
             System.debug('âœ… Updated Career Intent for session: ' + sessionId);
         }
     }
@@ -505,6 +507,7 @@ public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
 
             // Upsert the record
             upsert newIntent;
+            syncContactSalary(contactId, newIntent.Min_Salary_Expactation__c, newIntent.Max_Salary_Expactation__c);
 
             System.debug('âœ… Copied existing data to new session record');
             System.debug('   - Copied from: ' + existingIntent.Id);
@@ -606,6 +609,41 @@ public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
             return Integer.valueOf(cleaned);
         } catch (Exception e) {
             return null;
+        }
+    }
+
+    private void syncContactSalary(String contactId, Decimal minSalaryValue, Decimal maxSalaryValue) {
+        if (String.isBlank(contactId) || (minSalaryValue == null && maxSalaryValue == null)) {
+            return;
+        }
+
+        try {
+            List<Contact> contacts = [
+                SELECT Id, R_ATS__Minimum_Salary__c, R_ATS__Maximum_Salary__c
+                FROM Contact
+                WHERE Id = :contactId
+                LIMIT 1
+            ];
+            if (contacts.isEmpty()) return;
+
+            Contact currentContact = contacts[0];
+            Contact updateContact = new Contact(Id = currentContact.Id);
+            Boolean changed = false;
+
+            if (minSalaryValue != null && currentContact.R_ATS__Minimum_Salary__c != minSalaryValue) {
+                updateContact.R_ATS__Minimum_Salary__c = minSalaryValue;
+                changed = true;
+            }
+            if (maxSalaryValue != null && currentContact.R_ATS__Maximum_Salary__c != maxSalaryValue) {
+                updateContact.R_ATS__Maximum_Salary__c = maxSalaryValue;
+                changed = true;
+            }
+
+            if (changed) {
+                update updateContact;
+            }
+        } catch (Exception e) {
+            System.debug(LoggingLevel.WARN, 'Failed to sync Contact salary from Career Intent: ' + e.getMessage());
         }
     }
 

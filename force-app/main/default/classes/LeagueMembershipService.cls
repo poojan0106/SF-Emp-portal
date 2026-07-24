@@ -164,8 +164,31 @@ public with sharing class LeagueMembershipService {
             }
         }
 
-        if (!toInsert.isEmpty()) Database.insert(toInsert, false);
-        if (!toUpdate.isEmpty()) Database.update(toUpdate, false);
+        Set<Id> contactsToScore = new Set<Id>();
+        if (!toInsert.isEmpty()) {
+            Database.SaveResult[] insertResults = Database.insert(toInsert, false);
+            for (Integer i = 0; i < insertResults.size(); i++) {
+                if (insertResults[i].isSuccess() && toInsert[i].ContactId != null) {
+                    contactsToScore.add(toInsert[i].ContactId);
+                }
+            }
+        }
+        if (!toUpdate.isEmpty()) {
+            Database.SaveResult[] updateResults = Database.update(toUpdate, false);
+            for (Integer i = 0; i < updateResults.size(); i++) {
+                if (updateResults[i].isSuccess() && toUpdate[i].ContactId != null) {
+                    contactsToScore.add(toUpdate[i].ContactId);
+                }
+            }
+        }
+
+        for (Id contactId : contactsToScore) {
+            try {
+                CandidateCVScoringService.scoreCampaignMembersForContact(contactId);
+            } catch (Exception scoreError) {
+                System.debug(LoggingLevel.WARN, 'Unable to score CampaignMembers for contact ' + contactId + ': ' + scoreError.getMessage());
+            }
+        }
     }
 
     private static void ensureCampaignMemberStatuses(Set<Id> campaignIds) {

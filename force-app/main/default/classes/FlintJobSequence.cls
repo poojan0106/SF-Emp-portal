@@ -9,6 +9,7 @@ public class FlintJobSequence {
         'What are the must-have skills for this role?',
         'What nice-to-have skills would be a bonus?',
         'What\'s the salary range? I can provide market recommendations.',
+        'How many job openings do you have? Please enter whole numbers only.',
         'What\'s your timeline? How urgent is this hire?',      //Test
         'Is this a permanent, contract, or temporary position?',
         'Tell me about your team culture and what kind of fit you\'re looking for.',
@@ -21,10 +22,11 @@ public class FlintJobSequence {
         2 => 'text',
         3 => 'text',
         4 => 'number',
-        5 => 'text',
+        5 => 'number',
         6 => 'text',
         7 => 'text',
-        8 => 'text'
+        8 => 'text',
+        9 => 'text'
             
     };
     
@@ -34,10 +36,11 @@ public class FlintJobSequence {
         2 => new List<String>(),
         3 => new List<String>(),
         4 => new List<String>{ '$60K-$90K', '$90K-$120K', '$120K-$150K', '$150K+' },
-        5 => new List<String>{ 'Immediate (0-2 weeks)', 'Moderate (2-4 weeks)', 'Flexible (1+ month)' },
-        6 => new List<String>{ 'Permanent', 'Contract', 'Temporary' },
-        7 => new List<String>(),
-        8 => new List<String>()
+        5 => new List<String>(),
+        6 => new List<String>{ 'Immediate (0-2 weeks)', 'Moderate (2-4 weeks)', 'Flexible (1+ month)' },
+        7 => new List<String>{ 'Permanent', 'Contract', 'Temporary' },
+        8 => new List<String>(),
+        9 => new List<String>()
     };
     
     public static String getQuestion(Integer questionNum) {

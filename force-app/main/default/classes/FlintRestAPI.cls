@@ -505,12 +505,16 @@ global with sharing class FlintRestAPI {
             if (salary.containsKey('max')) jobDetails.put('salary_max', salary.get('max'));
         }
         if (answers.size() > 5) {
-            jobDetails.put('timeline_days', parseTimelineDays(answers[5]));
-            jobDetails.put('urgency', parseUrgency(answers[5]));
+            Integer openings = parseOpenings(answers[5]);
+            if (openings != null) jobDetails.put('job_openings', openings);
         }
-        if (answers.size() > 6) jobDetails.put('Employment_Type', normalizeEmploymentType(answers[6]));
-        if (answers.size() > 7) jobDetails.put('culture_notes', answers[7]);
-        if (answers.size() > 8) jobDetails.put('location', answers[8]);
+        if (answers.size() > 6) {
+            jobDetails.put('timeline_days', parseTimelineDays(answers[6]));
+            jobDetails.put('urgency', parseUrgency(answers[6]));
+        }
+        if (answers.size() > 7) jobDetails.put('Employment_Type', normalizeEmploymentType(answers[7]));
+        if (answers.size() > 8) jobDetails.put('culture_notes', answers[8]);
+        if (answers.size() > 9) jobDetails.put('location', answers[9]);
 
         return jobDetails;
     }
@@ -549,6 +553,13 @@ global with sharing class FlintRestAPI {
         if (!values.isEmpty()) salary.put('min', values[0]);
         if (values.size() > 1) salary.put('max', values[1]);
         return salary;
+    }
+
+    private static Integer parseOpenings(String value) {
+        if (String.isBlank(value)) return null;
+        String trimmed = value.trim();
+        if (!Pattern.compile('^\\d+$').matcher(trimmed).matches()) return null;
+        return Integer.valueOf(trimmed);
     }
 
     private static Integer parseTimelineDays(String value) {

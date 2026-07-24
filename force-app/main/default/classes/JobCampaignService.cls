@@ -49,6 +49,9 @@ public class JobCampaignService {
         if (jobDetails.containsKey('timeline_days')) {
             //job.Hiring_Timeline__c = Integer.valueOf(String.valueOf(jobDetails.get('timeline_days')));
         }
+        if (jobDetails.containsKey('job_openings')) {
+            job.R_ATS__No_of_openings__c = String.valueOf(jobDetails.get('job_openings'));
+        }
         if (jobDetails.containsKey('urgency')) {
             job.Urgency__c = normalizeUrgency((String) jobDetails.get('urgency'));
         }

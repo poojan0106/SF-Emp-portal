@@ -81,7 +81,8 @@ public with sharing class TalentPoolController {
         // Build query
         String query = 'SELECT Id, ContactId, Contact.FirstName, Contact.LastName, Contact.Email, ' +
             'Contact.Phone, Contact.MailingCity, Contact.R_ATS__Skills__c, Contact.Job_Role__c, Contact.Years_Experience__c, ' +
-            'AI_Match_Score__c, Sentiment_Tags__c, Interest_Date__c, Full_Profile_Unlocked__c, Status, Swipe_Event__c, ' +
+            'AI_Match_Score__c, AI_CV_Score__c, AI_CV_Tier__c, AI_CV_Score_Explanation__c, Combined_Score__c, Questionnaire_Score__c, ' +
+            'Sentiment_Tags__c, Interest_Date__c, Full_Profile_Unlocked__c, Status, Swipe_Event__c, ' +
             'Identity_Reveal_Status__c, Identity_Reveal_Requested_Date__c, Identity_Reveal_Responded_Date__c ' +
             'FROM CampaignMember WHERE CampaignId = :poolId AND Status IN (\'In League\', \'Interview Requested\', \'Interview Confirmed\', \'Interview Rejected\', \'Reschedule Requested\')';
         
@@ -98,7 +99,7 @@ public with sharing class TalentPoolController {
             }
         }
         
-        query += ' ORDER BY AI_Match_Score__c DESC NULLS LAST';
+        query += ' ORDER BY Combined_Score__c DESC NULLS LAST, AI_CV_Score__c DESC NULLS LAST, AI_Match_Score__c DESC NULLS LAST';
         
         System.debug('DEBUG 14: Final Query Before Count = ' + query);
         
@@ -147,7 +148,8 @@ public with sharing class TalentPoolController {
         CampaignMember member = [
             SELECT Id, ContactId, Contact.FirstName, Contact.LastName, Contact.Email,
                    Contact.Phone, Contact.MailingCity,Contact.Job_Role__c, Contact.R_ATS__Skills__c, Contact.Years_Experience__c,
-                   AI_Match_Score__c, Sentiment_Tags__c, Full_Profile_Unlocked__c,Interest_Date__c,
+                   AI_Match_Score__c, AI_CV_Score__c, AI_CV_Tier__c, AI_CV_Score_Explanation__c, Combined_Score__c, Questionnaire_Score__c,
+                   Sentiment_Tags__c, Full_Profile_Unlocked__c,Interest_Date__c,
                    Identity_Reveal_Status__c, Identity_Reveal_Requested_Date__c, Identity_Reveal_Responded_Date__c
             FROM CampaignMember
             WHERE Id = :campaignMemberId
@@ -176,7 +178,8 @@ public with sharing class TalentPoolController {
         List<CampaignMember> members = [
             SELECT Id, ContactId, Contact.FirstName, Contact.LastName, Contact.Email,
                    Contact.Phone, Contact.MailingCity, Contact.Job_Role__c, Contact.R_ATS__Skills__c,
-                   Contact.Years_Experience__c, AI_Match_Score__c, Sentiment_Tags__c,
+                   Contact.Years_Experience__c, AI_Match_Score__c, AI_CV_Score__c, AI_CV_Tier__c,
+                   AI_CV_Score_Explanation__c, Combined_Score__c, Questionnaire_Score__c, Sentiment_Tags__c,
                    Full_Profile_Unlocked__c, Interest_Date__c, Status, Swipe_Event__c,
                    Identity_Reveal_Status__c, Identity_Reveal_Requested_Date__c,
                    Identity_Reveal_Responded_Date__c, Campaign.Employer__c, Campaign.Employer__r.Name
@@ -234,7 +237,8 @@ public with sharing class TalentPoolController {
         List<CampaignMember> members = [
             SELECT Id, ContactId, Contact.FirstName, Contact.LastName, Contact.Email,
                    Contact.Phone, Contact.MailingCity, Contact.Job_Role__c, Contact.R_ATS__Skills__c,
-                   Contact.Years_Experience__c, AI_Match_Score__c, Sentiment_Tags__c,
+                   Contact.Years_Experience__c, AI_Match_Score__c, AI_CV_Score__c, AI_CV_Tier__c,
+                   AI_CV_Score_Explanation__c, Combined_Score__c, Questionnaire_Score__c, Sentiment_Tags__c,
                    Full_Profile_Unlocked__c, Interest_Date__c, Status, Swipe_Event__c,
                    Identity_Reveal_Status__c, Identity_Reveal_Requested_Date__c,
                    Identity_Reveal_Responded_Date__c, Campaign.Employer__c, Campaign.Employer__r.Name
@@ -740,6 +744,11 @@ public with sharing class TalentPoolController {
         @AuraEnabled public Id contactId;
         @AuraEnabled public String displayId;
         @AuraEnabled public Integer matchScore;
+        @AuraEnabled public Integer aiCvScore;
+        @AuraEnabled public String aiCvTier;
+        @AuraEnabled public String aiCvScoreExplanation;
+        @AuraEnabled public Integer combinedScore;
+        @AuraEnabled public Integer questionnaireScore;
         @AuraEnabled public List<String> skills;
         @AuraEnabled public Decimal experienceYears;
         @AuraEnabled public String location;
@@ -758,7 +767,15 @@ public with sharing class TalentPoolController {
         public CandidateWrapper(CampaignMember member, String tier, Integer index) {
             this.memberId = member.Id;
             this.contactId = member.ContactId;
-            this.matchScore = member.AI_Match_Score__c != null ? member.AI_Match_Score__c.intValue() : 0;
+            Decimal bestScore = member.Combined_Score__c != null
+                ? member.Combined_Score__c
+                : (member.AI_CV_Score__c != null ? member.AI_CV_Score__c : member.AI_Match_Score__c);
+            this.matchScore = bestScore != null ? bestScore.intValue() : 0;
+            this.aiCvScore = member.AI_CV_Score__c != null ? member.AI_CV_Score__c.intValue() : null;
+            this.aiCvTier = member.AI_CV_Tier__c;
+            this.aiCvScoreExplanation = member.AI_CV_Score_Explanation__c;
+            this.combinedScore = member.Combined_Score__c != null ? member.Combined_Score__c.intValue() : null;
+            this.questionnaireScore = member.Questionnaire_Score__c != null ? member.Questionnaire_Score__c.intValue() : null;
             this.sentimentTags = member.Sentiment_Tags__c;
             this.isUnlocked = member.Full_Profile_Unlocked__c == true
                 && member.Identity_Reveal_Status__c == 'Approved';

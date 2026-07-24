@@ -94,7 +94,7 @@ public with sharing class JobListingService {
         System.debug('Filter: ' + filter);
         
         String query = 'SELECT Id, Name,R_ATS__Location__c, R_ATS__Job_Reference_Number__c, '
-            + 'RecordType.DeveloperName, Department__c, Status, Type, IsActive, '
+            + 'RecordType.DeveloperName, Department__c, Status, Type, IsActive, Seniority_Level__c, Job_Seniority__c, '
             + 'StartDate, EndDate, R_ATS__No_of_openings__c, R_ATS__Salary__c, '
             + 'R_ATS__Minimum_Salary__c, R_ATS__Maximum_Salary__c, '
             + 'R_ATS__Bill_Rate__c, R_ATS__Pay_Rate__c, Source__c, Owner.Name, Description, '
@@ -163,7 +163,7 @@ public with sharing class JobListingService {
         
         Campaign c = [
             SELECT Id, Name, R_ATS__Job_Reference_Number__c,
-                RecordType.DeveloperName, Department__c, Status, Type, IsActive,
+                RecordType.DeveloperName, Department__c, Status, Type, IsActive, Seniority_Level__c, Job_Seniority__c,
                 StartDate, EndDate, Description, R_ATS__No_of_openings__c,R_ATS__Location__c,
                 R_ATS__Salary__c, R_ATS__Minimum_Salary__c, R_ATS__Maximum_Salary__c,
                 R_ATS__Bill_Rate__c, R_ATS__Pay_Rate__c, Source__c, Must_Have_Skills__c,
@@ -285,6 +285,8 @@ public with sharing class JobListingService {
         c.Description = req.description;
         c.Type = req.type;
         c.Employment_Type__c = req.type;
+        c.Seniority_Level__c = normalizeSeniority(getSeniorityValue(req));
+        c.Job_Seniority__c = normalizeSeniority(getSeniorityValue(req));
         c.Is_Talent_Pool__c = true;
         c.Created_by_Flint__c = false;
         c.Created_Via__c = 'manual';
@@ -353,6 +355,7 @@ public with sharing class JobListingService {
             SELECT Id, Name, Department__c, Description, R_ATS__Salary__c,
                    R_ATS__Minimum_Salary__c, R_ATS__Maximum_Salary__c,
                    R_ATS__Bill_Rate__c, R_ATS__Pay_Rate__c, R_ATS__No_of_openings__c,
+                   Seniority_Level__c, Job_Seniority__c,
                    EndDate, Urgency__c, R_ATS__Location__c, Created_Via__c, Source__c
             FROM Campaign 
             WHERE Id = :campaignId 
@@ -373,6 +376,12 @@ public with sharing class JobListingService {
         if (String.isNotBlank(req.type)) {
             c.Type = req.type;
             c.Employment_Type__c = req.type;
+        }
+
+        String seniority = normalizeSeniority(getSeniorityValue(req));
+        if (String.isNotBlank(seniority)) {
+            c.Seniority_Level__c = seniority;
+            c.Job_Seniority__c = seniority;
         }
 
         c.Is_Talent_Pool__c = true;
@@ -741,6 +750,7 @@ public with sharing class JobListingService {
         s.title = c.Name;
         s.ref = String.valueOf(c.R_ATS__Job_Reference_Number__c);
         s.type = String.isNotBlank(c.Type) ? c.Type : '';
+        s.seniority = String.isNotBlank(c.Seniority_Level__c) ? c.Seniority_Level__c : c.Job_Seniority__c;
         s.dept = c.Department__c;
         s.location = c.R_ATS__Location__c != null ? c.R_ATS__Location__c : '';
         s.status = derivePortalStatus(c.Status, c.IsActive);
@@ -864,6 +874,21 @@ public with sharing class JobListingService {
             if (String.isNotBlank(skill)) cleaned.add(skill.trim());
         }
         return cleaned.isEmpty() ? null : String.join(cleaned, ', ');
+    }
+
+    private static String getSeniorityValue(JobListingDTO.JobCreateRequest req) {
+        if (req == null) return null;
+        return String.isNotBlank(req.seniority) ? req.seniority : req.seniorityLevel;
+    }
+
+    private static String normalizeSeniority(String value) {
+        String lower = String.isBlank(value) ? '' : value.trim().toLowerCase();
+        if (lower == 'junior') return 'Junior';
+        if (lower == 'mid') return 'Mid';
+        if (lower == 'senior') return 'Senior';
+        if (lower == 'lead') return 'Lead';
+        if (lower == 'executive') return 'Executive';
+        return null;
     }
 
     private static List<String> parseSkillText(String skillsText) {
