@@ -124,7 +124,7 @@ global without sharing class EmployerDashboardController {
                 WHERE Campaign.Employer__c = :accountId 
                 AND Campaign.Status = 'Active'
                 AND Campaign.IsActive = true
-                AND AI_Match_Score__c >= 80
+                AND AI_CV_Score__c >= 80
                 AND Interview_Requested__c = false
                 AND Status = 'In League'];
 
@@ -225,7 +225,7 @@ global without sharing class EmployerDashboardController {
                 WHERE Campaign.Employer__c = :accountId 
                 AND Campaign.Status = 'Active'
                 AND Campaign.IsActive = true
-                AND AI_Match_Score__c >= 80
+                AND AI_CV_Score__c >= 80
                 AND Interview_Requested__c = false
                 AND Status = 'In League'];
             System.debug('Ready for Interview count: ' + readyForInterview);

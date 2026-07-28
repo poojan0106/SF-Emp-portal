@@ -19,6 +19,15 @@ public with sharing class JobListingService {
     private static final Set<String> STATUS_OFFERED     = new Set<String>{ 'Offer Accepted' };
     private static final Set<String> STATUS_PLACED      = new Set<String>{ 'Placed' };
     private static final Set<String> STATUS_REJECTED    = new Set<String>{ 'Rejected', 'Withdrawn', 'Not Suitable' };
+    private static final Set<String> PIPELINE_STATUSES = new Set<String>{
+        'In League',
+        'Interview Requested',
+        'Interview Confirmed',
+        'Interview Rejected',
+        'Reschedule Requested',
+        'Candidate Shortlisted',
+        'Candidate Rejected'
+    };
 
     // ─────────────────────────────────────────────────────
     // GET DASHBOARD STATS
@@ -186,10 +195,11 @@ public with sharing class JobListingService {
         detail.candidates = new List<JobListingDTO.PipelineCandidate>();
         List<CampaignMember> members = [
             SELECT Id, ContactId, Contact.Name, Contact.Email, Status,
-                   	R_ATS__Sub_Status__c, CreatedDate, R_ATS__Notes__c, AI_Match_Score__c,
+                   	R_ATS__Sub_Status__c, CreatedDate, R_ATS__Notes__c, AI_CV_Score__c,
                    SystemModstamp
             FROM CampaignMember
             WHERE CampaignId = :campaignId
+            AND Status IN :PIPELINE_STATUSES
             ORDER BY Status ASC, CreatedDate DESC
         ];
         
@@ -212,7 +222,7 @@ public with sharing class JobListingService {
             pc.dateAdded = cm.CreatedDate.date();
             pc.daysInStage = cm.SystemModstamp.date().daysBetween(Date.today());
             pc.notes = cm.R_ATS__Notes__c;
-            pc.matchScore = cm.AI_Match_Score__c;
+            pc.matchScore = cm.AI_CV_Score__c;
             pc.hasResume = withResume.contains(cm.ContactId);
             detail.candidates.add(pc);
         }
@@ -835,16 +845,31 @@ public with sharing class JobListingService {
         if (members == null) return p;
 
         for (CampaignMember cm : members) {
-            p.total++;
             String st = cm.Status;
-            if (STATUS_SHORTLISTED.contains(st))      p.shortlisted++;
-            else if (STATUS_SCREENING.contains(st))    p.screening++;
-            else if (STATUS_INTERVIEW1.contains(st))   p.interview1++;
-            else if (STATUS_INTERVIEW2.contains(st))   p.interview2++;
-            else if (STATUS_OFFERED.contains(st))      p.offered++;
-            else if (STATUS_PLACED.contains(st))       p.placed++;
-            else if (STATUS_REJECTED.contains(st))     p.rejected++;
-            else                                        p.screening++;
+            if (!PIPELINE_STATUSES.contains(st)) continue;
+            p.total++;
+            if (st == 'In League') {
+                p.inLeague++;
+                p.screening++;
+            } else if (st == 'Interview Requested') {
+                p.interviewRequested++;
+                p.interview1++;
+            } else if (st == 'Interview Confirmed') {
+                p.interviewConfirmed++;
+                p.interview2++;
+            } else if (st == 'Interview Rejected') {
+                p.interviewRejected++;
+                p.rejected++;
+            } else if (st == 'Reschedule Requested') {
+                p.rescheduleRequested++;
+                p.offered++;
+            } else if (st == 'Candidate Shortlisted') {
+                p.candidateShortlisted++;
+                p.shortlisted++;
+            } else if (st == 'Candidate Rejected') {
+                p.candidateRejected++;
+                p.rejected++;
+            }
         }
         return p;
     }

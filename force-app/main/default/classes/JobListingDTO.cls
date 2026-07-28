@@ -39,6 +39,13 @@ public with sharing class JobListingDTO {
 
     // ── Pipeline counts per Campaign Member Status ──
     public class PipelineSummary {
+        @AuraEnabled public Integer inLeague = 0;
+        @AuraEnabled public Integer interviewRequested = 0;
+        @AuraEnabled public Integer interviewConfirmed = 0;
+        @AuraEnabled public Integer interviewRejected = 0;
+        @AuraEnabled public Integer rescheduleRequested = 0;
+        @AuraEnabled public Integer candidateShortlisted = 0;
+        @AuraEnabled public Integer candidateRejected = 0;
         @AuraEnabled public Integer shortlisted = 0;     // Shortlist
         @AuraEnabled public Integer screening = 0;       // New Application / Screening
         @AuraEnabled public Integer interview1 = 0;      // Internal Interview

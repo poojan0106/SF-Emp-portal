@@ -135,6 +135,16 @@ global with sharing class candidateRegistrationRestResource {
                 );
                 insert reg;
 
+                try {
+                    AICVEnhancementService.sendCandidateRegistrationInvitation(
+                        con.Id,
+                        reqBody.email,
+                        reqBody.firstName
+                    );
+                } catch (Exception emailError) {
+                    System.debug(LoggingLevel.WARN, 'Candidate onboarding email failed: ' + emailError.getMessage());
+                }
+
                 // 5. Re-query full Registration record with all fields
                 Registration_Request__c fullReg = queryFullRegistration(reg.Id);
 

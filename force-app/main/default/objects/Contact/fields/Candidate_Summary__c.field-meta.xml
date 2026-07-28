@@ -1,10 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
-    <fullName>CV_Insights_Referenced__c</fullName>
-    <label>CV Insights Referenced</label>
+    <fullName>Candidate_Summary__c</fullName>
+    <label>Candidate Summary</label>
     <length>32768</length>
     <trackHistory>false</trackHistory>
-    <trackTrending>false</trackTrending>
     <type>LongTextArea</type>
-    <visibleLines>4</visibleLines>
+    <visibleLines>8</visibleLines>
 </CustomField>

@@ -25,6 +25,16 @@
                 <label>Reschedule Requested</label>
             </value>
             <value>
+                <fullName>Candidate Rejected</fullName>
+                <default>false</default>
+                <label>Candidate Rejected</label>
+            </value>
+            <value>
+                <fullName>Candidate Shortlisted</fullName>
+                <default>false</default>
+                <label>Candidate Shortlisted</label>
+            </value>
+            <value>
                 <fullName>Completed</fullName>
                 <default>false</default>
                 <label>Completed</label>

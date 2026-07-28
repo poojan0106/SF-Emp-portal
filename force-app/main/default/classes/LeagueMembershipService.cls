@@ -197,7 +197,9 @@ public with sharing class LeagueMembershipService {
             'Interview Requested',
             'Interview Confirmed',
             'Interview Rejected',
-            'Reschedule Requested'
+            'Reschedule Requested',
+            'Candidate Shortlisted',
+            'Candidate Rejected'
         };
         Set<String> existingKeys = new Set<String>();
         for (CampaignMemberStatus statusRecord : [
@@ -215,7 +217,9 @@ public with sharing class LeagueMembershipService {
             'Interview Requested' => 50,
             'Interview Confirmed' => 60,
             'Interview Rejected' => 65,
-            'Reschedule Requested' => 70
+            'Reschedule Requested' => 70,
+            'Candidate Shortlisted' => 90,
+            'Candidate Rejected' => 95
         };
         for (Id campaignId : campaignIds) {
             for (String statusLabel : neededStatuses) {

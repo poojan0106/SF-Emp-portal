@@ -145,6 +145,7 @@ public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
                 mappedIntent.Last_Check_In__c = DateTime.now();
                 upsert mappedIntent;
                 syncContactSalary(contactId, mappedIntent.Min_Salary_Expactation__c, mappedIntent.Max_Salary_Expactation__c);
+                syncContactSkills(contactId, mappedIntent.Skills__c);
                 System.debug('Updated Career Intent by questionCount ' + answeredQuestionCount + ' for session: ' + sessionId);
             }
             return;
@@ -281,6 +282,7 @@ public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
             intent.Last_Check_In__c = DateTime.now();
             upsert intent;
             syncContactSalary(contactId, intent.Min_Salary_Expactation__c, intent.Max_Salary_Expactation__c);
+            syncContactSkills(contactId, intent.Skills__c);
             System.debug('âœ… Updated Career Intent for session: ' + sessionId);
         }
     }
@@ -341,7 +343,7 @@ public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
             return true;
         }
         if (questionNumber == 12) {
-            intent.Skills__c = cleaned;
+            intent.Skills__c = mergeSkillText(null, cleaned);
             return true;
         }
 
@@ -398,6 +400,25 @@ public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
             ];
         } catch (Exception e) {
             System.debug(LoggingLevel.WARN, 'Unable to lock Contact before intent save: ' + e.getMessage());
+        }
+    }
+
+    private String mergeSkillText(String existingSkills, String incomingSkills) {
+        Set<String> seen = new Set<String>();
+        List<String> merged = new List<String>();
+        addSkills(merged, seen, incomingSkills);
+        return merged.isEmpty() ? null : String.join(merged, ', ');
+    }
+
+    private void addSkills(List<String> merged, Set<String> seen, String skillsText) {
+        if (String.isBlank(skillsText)) return;
+        for (String rawSkill : skillsText.split('[,;\\n]+')) {
+            String skill = rawSkill == null ? '' : rawSkill.trim();
+            if (String.isBlank(skill)) continue;
+            String key = skill.toLowerCase();
+            if (seen.contains(key)) continue;
+            seen.add(key);
+            merged.add(skill);
         }
     }
 
@@ -644,6 +665,26 @@ public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
             }
         } catch (Exception e) {
             System.debug(LoggingLevel.WARN, 'Failed to sync Contact salary from Career Intent: ' + e.getMessage());
+        }
+    }
+
+    private void syncContactSkills(String contactId, String skillsText) {
+        if (String.isBlank(contactId) || String.isBlank(skillsText)) {
+            return;
+        }
+
+        try {
+            List<Contact> contacts = [
+                SELECT Id, R_ATS__Skills__c
+                FROM Contact
+                WHERE Id = :contactId
+                LIMIT 1
+            ];
+            if (contacts.isEmpty() || contacts[0].R_ATS__Skills__c == skillsText) return;
+
+            update new Contact(Id = contacts[0].Id, R_ATS__Skills__c = skillsText);
+        } catch (Exception e) {
+            System.debug(LoggingLevel.WARN, 'Failed to sync Contact skills from Career Intent: ' + e.getMessage());
         }
     }
 

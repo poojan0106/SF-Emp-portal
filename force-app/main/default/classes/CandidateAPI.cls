@@ -125,7 +125,7 @@ global class CandidateAPI {
             'Contact.Anonymized_Name__c, Contact.Job_Role__c, Contact.Status__c, ' +
             'Contact.Interest_Notes__c, Contact.Short_Term_Goals__c, Contact.Long_Term_Goals__c, ' +
             'Contact.Expected_Salary__c, Contact.Work_Preference__c, Contact.Candidate_Sentiment__c, ' +
-            'Contact.Availability__c, Contact.Skill_Ratings__c, AI_Match_Score__c, CampaignId, ' +
+            'Contact.Availability__c, Contact.Skill_Ratings__c, AI_CV_Score__c, Combined_Score__c, CampaignId, ' +
             'Full_Profile_Unlocked__c, Identity_Reveal_Status__c ' +
             'FROM CampaignMember WHERE Campaign.Employer__c = :accountId AND Status != \'Expired\'';
         
@@ -231,7 +231,7 @@ global class CandidateAPI {
                     Contact.Anonymized_Name__c, Contact.Job_Role__c, Contact.Status__c,
                     Contact.Interest_Notes__c, Contact.Short_Term_Goals__c, Contact.Long_Term_Goals__c,
                     Contact.Expected_Salary__c, Contact.Work_Preference__c, Contact.Candidate_Sentiment__c,
-                    Contact.Availability__c, Contact.Skill_Ratings__c, AI_Match_Score__c,
+                    Contact.Availability__c, Contact.Skill_Ratings__c, AI_CV_Score__c, Combined_Score__c,
                     Full_Profile_Unlocked__c, Identity_Reveal_Status__c
                 FROM CampaignMember
                 WHERE Id = :candidateId AND Campaign.Employer__c = :accountId
@@ -428,7 +428,7 @@ global class CandidateAPI {
                     Contact.Years_Experience__c, Contact.MailingCity, Contact.MailingState, Contact.MailingCountry,
                     Contact.Anonymized_Name__c, Contact.Job_Role__c, Contact.Status__c,
                     Contact.Interest_Notes__c, Contact.Expected_Salary__c, Contact.Work_Preference__c,
-                    Contact.Candidate_Sentiment__c, AI_Match_Score__c
+                    Contact.Candidate_Sentiment__c, AI_CV_Score__c, Combined_Score__c
                 FROM CampaignMember
                 WHERE Campaign.Employer__c = :accountId AND Status IN ('Interested', 'In League')
                 LIMIT 50000
@@ -1826,9 +1826,10 @@ global class CandidateAPI {
             && member.Identity_Reveal_Status__c == 'Approved';
         dto.realName = dto.isIdentityRevealed ? contact.Name : dto.anonymizedName;
         dto.role = contact.Job_Role__c;
-        dto.matchScore = member.AI_Match_Score__c != null 
-            ? Integer.valueOf(member.AI_Match_Score__c) 
-            : 0;
+        Decimal bestScore = member.Combined_Score__c != null
+            ? member.Combined_Score__c
+            : member.AI_CV_Score__c;
+        dto.matchScore = bestScore != null ? Integer.valueOf(bestScore) : 0;
         dto.matchStars = Math.floor(dto.matchScore / 20);
         dto.years = contact.Years_Experience__c != null 
             ? Integer.valueOf(contact.Years_Experience__c) 
@@ -1968,7 +1969,10 @@ global class CandidateAPI {
             rowFields.add(escapeCsvField(c.Name));
             rowFields.add(escapeCsvField(c.Anonymized_Name__c));
             rowFields.add(escapeCsvField(c.Job_Role__c));
-            rowFields.add(String.valueOf(member.AI_Match_Score__c ?? 0));
+            Decimal bestScore = member.Combined_Score__c != null
+                ? member.Combined_Score__c
+                : member.AI_CV_Score__c;
+            rowFields.add(String.valueOf(bestScore ?? 0));
             rowFields.add(String.valueOf(c.Years_Experience__c ?? 0));
             rowFields.add(escapeCsvField(location));
             rowFields.add(escapeCsvField(skillsStr));
@@ -2017,7 +2021,7 @@ global class CandidateAPI {
         // Default to matchScore if null or blank
         if (String.isBlank(sortBy)) {
             System.debug('sortBy is blank, using default: matchScore');
-            return 'AI_Match_Score__c';
+            return 'AI_CV_Score__c';
         }
         
         // Normalize to lowercase for comparison
@@ -2027,7 +2031,7 @@ global class CandidateAPI {
         
         switch on normalizedSort {
             when 'matchscore' {
-                return 'AI_Match_Score__c';
+                return 'AI_CV_Score__c';
             }
             when 'years' {
                 return 'Contact.Years_Experience__c';
@@ -2037,7 +2041,7 @@ global class CandidateAPI {
             }
             when else {
                 System.debug('Unknown sortBy value: ' + normalizedSort + ', using default');
-                return 'AI_Match_Score__c';
+                return 'AI_CV_Score__c';
             }
         }
     }

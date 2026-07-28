@@ -1,164 +1,67 @@
 /**
  * CandidateMatchingService
- * AI-powered candidate matching for jobs and talent pools
+ * Backward-compatible entry points for candidate/job scoring.
+ * Legacy match formula removed; scoring now uses AI_CV_Score__c.
  */
 public class CandidateMatchingService {
-    
+
     public static void matchCandidatesToJob(Id jobId, Id accountId) {
-        Campaign job = [
-            SELECT Id, Name, Must_Have_Skills__c, Nice_To_Have_Skills__c, 
-                   Job_Seniority__c, Location_Requirement__c, Employer__r.Name
-            FROM Campaign WHERE Id = :jobId
-        ];
-        
-        // Get talent pool for this employer
-        List<Campaign> talentPools = [
-            SELECT Id FROM Campaign 
-            WHERE Employer__c = :accountId 
-            AND RecordType.DeveloperName = 'Talent_Pool'
-            AND IsActive = true
-        ];
-        
-        if (talentPools.isEmpty()) return;
-        
-        // Get candidates from talent pool
-        List<CampaignMember> poolMembers = [
-            SELECT Id, ContactId, Contact.MailingCity, AI_Match_Score__c
+        if (jobId == null) return;
+
+        List<CampaignMember> members = [
+            SELECT Id, ContactId
             FROM CampaignMember
-            WHERE CampaignId IN :talentPools
-            AND Status = 'Interested'
+            WHERE CampaignId = :jobId
         ];
-        
+        if (members.isEmpty()) return;
+
         Set<Id> contactIds = new Set<Id>();
-        for (CampaignMember member : poolMembers) {
-            contactIds.add(member.ContactId);
+        for (CampaignMember member : members) {
+            if (member.ContactId != null) contactIds.add(member.ContactId);
         }
-        
-        // Get candidate skills
-        Map<Id, Contact> candidates = new Map<Id, Contact>([
-            SELECT Id, R_ATS__Skills__c, Years_Experience__c, MailingCity
-            FROM Contact WHERE Id IN :contactIds
-        ]);
-        
-        // Calculate match scores
-        List<String> mustHaveSkills = parseSkills(job.Must_Have_Skills__c);
-        List<String> niceToHaveSkills = parseSkills(job.Nice_To_Have_Skills__c);
-        
+
+        for (Id contactId : contactIds) {
+            CandidateCVScoringService.scoreCampaignMembersForContact(contactId);
+        }
+
+        List<CampaignMember> scoredMembers = [
+            SELECT Id, ContactId, AI_CV_Score__c, Campaign.Name, Campaign.Employer__r.Name
+            FROM CampaignMember
+            WHERE CampaignId = :jobId
+        ];
+
         Integer matchingCount = 0;
         Set<Id> notifiedContactIds = new Set<Id>();
         List<NotificationService.NotificationRequest> notificationRequests = new List<NotificationService.NotificationRequest>();
-        for (CampaignMember member : poolMembers) {
-            Contact candidate = candidates.get(member.ContactId);
-            if (candidate != null) {
-                Integer score = calculateMatchScore(candidate, mustHaveSkills, niceToHaveSkills, job);
-                member.AI_Match_Score__c = score;
-                if (score >= 70 && !notifiedContactIds.contains(member.ContactId)) {
-                    matchingCount++;
-                    notifiedContactIds.add(member.ContactId);
-                    NotificationService.NotificationRequest request = new NotificationService.NotificationRequest();
-                    request.recipientId = member.ContactId;
-                    request.notificationType = 'Job_Match';
-                    request.title = 'New job match: ' + job.Name;
-                    request.description = job.Name + ' Position at ' + job.Employer__r.Name +
-                        ' matches your career profile.';
-                    request.linkTo = '/discover-employers';
-                    request.priority = 'Normal';
-                    notificationRequests.add(request);
-                }
+
+        for (CampaignMember member : scoredMembers) {
+            Decimal score = member.AI_CV_Score__c == null ? 0 : member.AI_CV_Score__c;
+            if (score >= 70 && member.ContactId != null && !notifiedContactIds.contains(member.ContactId)) {
+                matchingCount++;
+                notifiedContactIds.add(member.ContactId);
+
+                NotificationService.NotificationRequest request = new NotificationService.NotificationRequest();
+                request.recipientId = member.ContactId;
+                request.notificationType = 'Job_Match';
+                request.title = 'New job match: ' + member.Campaign.Name;
+                request.description = member.Campaign.Name + ' Position at ' + member.Campaign.Employer__r.Name +
+                    ' matches your career profile.';
+                request.linkTo = '/discover-employers';
+                request.priority = 'Normal';
+                notificationRequests.add(request);
             }
         }
-        
-        update poolMembers;
-        NotificationService.notifyMany(notificationRequests);
-        
-        // Update job matching count
+
+        if (!notificationRequests.isEmpty()) {
+            NotificationService.notifyMany(notificationRequests);
+        }
+
+        Campaign job = new Campaign(Id = jobId);
         job.Matching_Candidate_Count__c = matchingCount;
         update job;
     }
-    
+
     public static void calculateMatchScore(Id campaignMemberId) {
-        CampaignMember member = [
-            SELECT Id, ContactId, CampaignId, Campaign.Employer__c
-            FROM CampaignMember WHERE Id = :campaignMemberId
-        ];
-        
-        Contact candidate = [
-            SELECT Id, R_ATS__Skills__c, Years_Experience__c, MailingCity
-            FROM Contact WHERE Id = :member.ContactId
-        ];
-        
-        // Get employer's typical requirements
-        Account employer = [
-            SELECT Id, Typical_Departments__c, Industry
-            FROM Account WHERE Id = :member.Campaign.Employer__c
-        ];
-        
-        // Simple scoring based on profile completeness and industry match
-        Integer score = 50; // Base score
-        
-        if (String.isNotBlank(candidate.R_ATS__Skills__c)) score += 20;
-        if (candidate.Years_Experience__c != null && candidate.Years_Experience__c > 0) score += 15;
-        if (String.isNotBlank(candidate.MailingCity)) score += 15;
-        
-        member.AI_Match_Score__c = Math.min(score, 100);
-        update member;
-    }
-    
-    private static List<String> parseSkills(String skillsJson) {
-        if (String.isBlank(skillsJson)) return new List<String>();
-        
-        try {
-            Object parsed = JSON.deserializeUntyped(skillsJson);
-            if (parsed instanceof List<Object>) {
-                List<String> skills = new List<String>();
-                for (Object skill : (List<Object>) parsed) {
-                    skills.add(String.valueOf(skill).toLowerCase());
-                }
-                return skills;
-            }
-        } catch (Exception e) {
-            // If not JSON, treat as comma-separated
-            return skillsJson.toLowerCase().split(',');
-        }
-        return new List<String>();
-    }
-    
-    private static Integer calculateMatchScore(Contact candidate, List<String> mustHave, List<String> niceToHave, Campaign job) {
-        Integer score = 40; // Base score
-        
-        List<String> candidateSkills = new List<String>();
-        if (String.isNotBlank(candidate.R_ATS__Skills__c)) {
-            candidateSkills = candidate.R_ATS__Skills__c.toLowerCase().split('[,;\\s]+');
-        }
-        
-        // Check must-have skills (up to 40 points)
-        Integer mustHaveMatches = 0;
-        for (String skill : mustHave) {
-            for (String candidateSkill : candidateSkills) {
-                if (candidateSkill.contains(skill) || skill.contains(candidateSkill)) {
-                    mustHaveMatches++;
-                    break;
-                }
-            }
-        }
-        if (!mustHave.isEmpty()) {
-            score += (mustHaveMatches * 40) / mustHave.size();
-        }
-        
-        // Check nice-to-have skills (up to 20 points)
-        Integer niceToHaveMatches = 0;
-        for (String skill : niceToHave) {
-            for (String candidateSkill : candidateSkills) {
-                if (candidateSkill.contains(skill) || skill.contains(candidateSkill)) {
-                    niceToHaveMatches++;
-                    break;
-                }
-            }
-        }
-        if (!niceToHave.isEmpty()) {
-            score += (niceToHaveMatches * 20) / niceToHave.size();
-        }
-        
-        return Math.min(score, 100);
+        CandidateCVScoringService.scoreCampaignMember(campaignMemberId);
     }
 }

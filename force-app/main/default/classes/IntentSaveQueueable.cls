@@ -105,6 +105,10 @@ public class IntentSaveQueueable implements Queueable {
             if (String.isNotBlank(industryPreferences)) {
                 intent.Industry_Preferences__c = industryPreferences;
             }
+            String contactSkills = normalizeSkillText(getContactSkills(contactId));
+            if (String.isNotBlank(contactSkills)) {
+                intent.Skills__c = contactSkills;
+            }
 
             if (isNew) {
                 insert intent;
@@ -133,7 +137,7 @@ public class IntentSaveQueueable implements Queueable {
                    Short_Term_Goal__c, Medium_Term_Goal__c, Long_Term_Goal__c,
                    Aspirational_Goal__c, Willing_to_Relocate__c, Short_Term_Remote__c,
                    Min_Salary_Expactation__c, Max_Salary_Expactation__c,
-                   Short_Term_Company_Size__c, Industry_Preferences__c
+                   Short_Term_Company_Size__c, Industry_Preferences__c, Skills__c
             FROM Career_Intent__c
             WHERE Contact__c = :contactId OR Candidate__c = :contactId
             ORDER BY LastModifiedDate DESC
@@ -189,6 +193,41 @@ public class IntentSaveQueueable implements Queueable {
 
         if (changed) {
             update updateContact;
+        }
+    }
+
+    private String getContactSkills(String contactId) {
+        if (String.isBlank(contactId)) return null;
+        try {
+            List<Contact> contacts = [
+                SELECT R_ATS__Skills__c
+                FROM Contact
+                WHERE Id = :contactId
+                LIMIT 1
+            ];
+            return contacts.isEmpty() ? null : contacts[0].R_ATS__Skills__c;
+        } catch (Exception e) {
+            System.debug(LoggingLevel.WARN, 'Unable to read Contact skills for intent sync: ' + e.getMessage());
+            return null;
+        }
+    }
+
+    private String normalizeSkillText(String incomingSkills) {
+        Set<String> seen = new Set<String>();
+        List<String> merged = new List<String>();
+        addSkills(merged, seen, incomingSkills);
+        return merged.isEmpty() ? null : String.join(merged, ', ');
+    }
+
+    private void addSkills(List<String> merged, Set<String> seen, String skillsText) {
+        if (String.isBlank(skillsText)) return;
+        for (String rawSkill : skillsText.split('[,;\\n]+')) {
+            String skill = rawSkill == null ? '' : rawSkill.trim();
+            if (String.isBlank(skill)) continue;
+            String key = skill.toLowerCase();
+            if (seen.contains(key)) continue;
+            seen.add(key);
+            merged.add(skill);
         }
     }
 

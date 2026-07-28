@@ -614,14 +614,13 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
             con.R_ATS__Qualification__c = getString(firstEdu, 'degree');
         }
         
-        // Skills - combine into a text field
+        // Skills - replace with latest parsed CV skills
         if (skills != null && !skills.isEmpty()) {
             List<String> skillList = new List<String>();
             for (Object skill : skills) {
                 skillList.add(String.valueOf(skill));
             }
-            // Assuming custom field exists:
-            con.R_ATS__Skills__c = String.join(skillList, ', ');
+            con.R_ATS__Skills__c = mergeSkillText(null, skillList);
         }
         
         // Summary
@@ -652,7 +651,7 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
         
         // Check if contact already exists
         List<Contact> existingContacts = [
-            SELECT Id, FirstName, LastName, Email
+            SELECT Id, FirstName, LastName, Email, R_ATS__Skills__c
             FROM Contact
             WHERE Email = :con.Email
             LIMIT 1
@@ -667,6 +666,7 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
             insert con;
             System.debug('Contact created: ' + con.Id);
         }
+        syncCareerIntentSkills(con.Id, con.R_ATS__Skills__c);
         
         // Create Task linked to Contact
         createResumeTaskIfMissing(
@@ -692,7 +692,7 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
 
     private void updateExistingContactFromParsedData(Id contactId, Map<String, Object> data, String fileName) {
         List<Contact> contacts = [
-            SELECT Id, Description
+            SELECT Id, Description, R_ATS__Skills__c
             FROM Contact
             WHERE Id = :contactId
             LIMIT 1
@@ -727,7 +727,7 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
             for (Object skill : skills) {
                 skillList.add(String.valueOf(skill));
             }
-            con.R_ATS__Skills__c = String.join(skillList, ', ');
+            con.R_ATS__Skills__c = mergeSkillText(null, skillList);
         }
 
         String summary = getString(data, 'summary');
@@ -750,6 +750,7 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
         con.LeadSource = 'Candidate Portal CV Upload';
 
         update con;
+        syncCareerIntentSkills(contactId, con.R_ATS__Skills__c);
 
         createResumeTaskIfMissing(
             contactId,
@@ -1194,6 +1195,62 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
 
     private String normalizeKey(String value) {
         return String.isBlank(value) ? '' : value.trim().toLowerCase();
+    }
+
+    private List<String> splitSkills(String skillsText) {
+        List<String> skills = new List<String>();
+        if (String.isBlank(skillsText)) return skills;
+        for (String rawSkill : skillsText.split('[,;\\n]+')) {
+            if (String.isNotBlank(rawSkill)) {
+                skills.add(rawSkill.trim());
+            }
+        }
+        return skills;
+    }
+
+    private String mergeSkillText(String existingSkills, List<String> incomingSkills) {
+        Set<String> seen = new Set<String>();
+        List<String> merged = new List<String>();
+        if (incomingSkills != null) {
+            for (String rawSkill : incomingSkills) {
+                addUniqueSkill(merged, seen, rawSkill);
+            }
+        }
+        return merged.isEmpty() ? null : String.join(merged, ', ');
+    }
+
+    private void syncCareerIntentSkills(Id contactId, String skillsText) {
+        if (contactId == null || String.isBlank(skillsText) || !Schema.getGlobalDescribe().containsKey('Career_Intent__c')) return;
+
+        try {
+            List<Career_Intent__c> intents = [
+                SELECT Id, Skills__c
+                FROM Career_Intent__c
+                WHERE Contact__c = :contactId OR Candidate__c = :contactId
+                ORDER BY LastModifiedDate DESC
+                LIMIT 1
+            ];
+            Career_Intent__c intent = intents.isEmpty()
+                ? new Career_Intent__c(Contact__c = contactId, Candidate__c = contactId)
+                : intents[0];
+            String mergedSkills = mergeSkillText(null, splitSkills(skillsText));
+            if (String.isBlank(mergedSkills) || intent.Skills__c == mergedSkills) return;
+
+            intent.Skills__c = mergedSkills;
+            if (intent.Id == null) insert intent;
+            else update intent;
+        } catch (Exception e) {
+            System.debug(LoggingLevel.WARN, 'Unable to sync Career Intent skills: ' + e.getMessage());
+        }
+    }
+
+    private void addUniqueSkill(List<String> merged, Set<String> seen, String rawSkill) {
+        String cleaned = rawSkill == null ? '' : rawSkill.trim();
+        if (String.isBlank(cleaned)) return;
+        String key = cleaned.toLowerCase();
+        if (seen.contains(key)) return;
+        seen.add(key);
+        merged.add(cleaned);
     }
     
     private Date parseDate(String dateStr) {

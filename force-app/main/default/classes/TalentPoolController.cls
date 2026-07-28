@@ -81,10 +81,10 @@ public with sharing class TalentPoolController {
         // Build query
         String query = 'SELECT Id, ContactId, Contact.FirstName, Contact.LastName, Contact.Email, ' +
             'Contact.Phone, Contact.MailingCity, Contact.R_ATS__Skills__c, Contact.Job_Role__c, Contact.Years_Experience__c, ' +
-            'AI_Match_Score__c, AI_CV_Score__c, AI_CV_Tier__c, AI_CV_Score_Explanation__c, Combined_Score__c, Questionnaire_Score__c, ' +
+            'AI_CV_Score__c, AI_CV_Tier__c, AI_CV_Score_Explanation__c, Combined_Score__c, Questionnaire_Score__c, ' +
             'Sentiment_Tags__c, Interest_Date__c, Full_Profile_Unlocked__c, Status, Swipe_Event__c, ' +
             'Identity_Reveal_Status__c, Identity_Reveal_Requested_Date__c, Identity_Reveal_Responded_Date__c ' +
-            'FROM CampaignMember WHERE CampaignId = :poolId AND Status IN (\'In League\', \'Interview Requested\', \'Interview Confirmed\', \'Interview Rejected\', \'Reschedule Requested\')';
+            'FROM CampaignMember WHERE CampaignId = :poolId AND Status IN (\'In League\', \'Interview Requested\', \'Interview Confirmed\', \'Interview Rejected\', \'Reschedule Requested\', \'Candidate Shortlisted\', \'Candidate Rejected\')';
         
         // Apply filters
         if (filters != null) {
@@ -99,7 +99,7 @@ public with sharing class TalentPoolController {
             }
         }
         
-        query += ' ORDER BY Combined_Score__c DESC NULLS LAST, AI_CV_Score__c DESC NULLS LAST, AI_Match_Score__c DESC NULLS LAST';
+        query += ' ORDER BY Combined_Score__c DESC NULLS LAST, AI_CV_Score__c DESC NULLS LAST';
         
         System.debug('DEBUG 14: Final Query Before Count = ' + query);
         
@@ -148,7 +148,7 @@ public with sharing class TalentPoolController {
         CampaignMember member = [
             SELECT Id, ContactId, Contact.FirstName, Contact.LastName, Contact.Email,
                    Contact.Phone, Contact.MailingCity,Contact.Job_Role__c, Contact.R_ATS__Skills__c, Contact.Years_Experience__c,
-                   AI_Match_Score__c, AI_CV_Score__c, AI_CV_Tier__c, AI_CV_Score_Explanation__c, Combined_Score__c, Questionnaire_Score__c,
+                   AI_CV_Score__c, AI_CV_Tier__c, AI_CV_Score_Explanation__c, Combined_Score__c, Questionnaire_Score__c,
                    Sentiment_Tags__c, Full_Profile_Unlocked__c,Interest_Date__c,
                    Identity_Reveal_Status__c, Identity_Reveal_Requested_Date__c, Identity_Reveal_Responded_Date__c
             FROM CampaignMember
@@ -178,7 +178,7 @@ public with sharing class TalentPoolController {
         List<CampaignMember> members = [
             SELECT Id, ContactId, Contact.FirstName, Contact.LastName, Contact.Email,
                    Contact.Phone, Contact.MailingCity, Contact.Job_Role__c, Contact.R_ATS__Skills__c,
-                   Contact.Years_Experience__c, AI_Match_Score__c, AI_CV_Score__c, AI_CV_Tier__c,
+                   Contact.Years_Experience__c, AI_CV_Score__c, AI_CV_Tier__c,
                    AI_CV_Score_Explanation__c, Combined_Score__c, Questionnaire_Score__c, Sentiment_Tags__c,
                    Full_Profile_Unlocked__c, Interest_Date__c, Status, Swipe_Event__c,
                    Identity_Reveal_Status__c, Identity_Reveal_Requested_Date__c,
@@ -237,7 +237,7 @@ public with sharing class TalentPoolController {
         List<CampaignMember> members = [
             SELECT Id, ContactId, Contact.FirstName, Contact.LastName, Contact.Email,
                    Contact.Phone, Contact.MailingCity, Contact.Job_Role__c, Contact.R_ATS__Skills__c,
-                   Contact.Years_Experience__c, AI_Match_Score__c, AI_CV_Score__c, AI_CV_Tier__c,
+                   Contact.Years_Experience__c, AI_CV_Score__c, AI_CV_Tier__c,
                    AI_CV_Score_Explanation__c, Combined_Score__c, Questionnaire_Score__c, Sentiment_Tags__c,
                    Full_Profile_Unlocked__c, Interest_Date__c, Status, Swipe_Event__c,
                    Identity_Reveal_Status__c, Identity_Reveal_Requested_Date__c,
@@ -513,10 +513,13 @@ public with sharing class TalentPoolController {
     private static void ensureInterviewCampaignMemberStatuses(Set<Id> campaignIds) {
         if (campaignIds == null || campaignIds.isEmpty()) return;
         Set<String> needed = new Set<String>{
+            'In League',
             'Interview Requested',
             'Interview Confirmed',
             'Interview Rejected',
-            'Reschedule Requested'
+            'Reschedule Requested',
+            'Candidate Shortlisted',
+            'Candidate Rejected'
         };
         Set<String> existingKeys = new Set<String>();
         for (CampaignMemberStatus statusRecord : [
@@ -528,7 +531,15 @@ public with sharing class TalentPoolController {
             existingKeys.add(String.valueOf(statusRecord.CampaignId) + '|' + statusRecord.Label);
         }
         List<CampaignMemberStatus> toInsert = new List<CampaignMemberStatus>();
-        Integer sortOrder = 50;
+        Map<String, Integer> sortOrderByStatus = new Map<String, Integer>{
+            'In League' => 20,
+            'Interview Requested' => 50,
+            'Interview Confirmed' => 60,
+            'Interview Rejected' => 65,
+            'Reschedule Requested' => 70,
+            'Candidate Shortlisted' => 90,
+            'Candidate Rejected' => 95
+        };
         for (Id campaignId : campaignIds) {
             for (String label : needed) {
                 String key = String.valueOf(campaignId) + '|' + label;
@@ -538,10 +549,9 @@ public with sharing class TalentPoolController {
                         Label = label,
                         HasResponded = true,
                         IsDefault = false,
-                        SortOrder = sortOrder
+                        SortOrder = sortOrderByStatus.get(label)
                     ));
                 }
-                sortOrder++;
             }
         }
         if (!toInsert.isEmpty()) Database.insert(toInsert, false);
@@ -589,7 +599,7 @@ public with sharing class TalentPoolController {
    		 );
         
         List<AggregateResult> results = [
-            SELECT AVG(AI_Match_Score__c) avgScore, AVG(Contact.Years_Experience__c) avgExp
+            SELECT AVG(AI_CV_Score__c) avgScore, AVG(Contact.Years_Experience__c) avgExp
             FROM CampaignMember
             WHERE CampaignId = :poolId AND Status IN ('Interested', 'In League')
         ];
@@ -769,7 +779,7 @@ public with sharing class TalentPoolController {
             this.contactId = member.ContactId;
             Decimal bestScore = member.Combined_Score__c != null
                 ? member.Combined_Score__c
-                : (member.AI_CV_Score__c != null ? member.AI_CV_Score__c : member.AI_Match_Score__c);
+                : member.AI_CV_Score__c;
             this.matchScore = bestScore != null ? bestScore.intValue() : 0;
             this.aiCvScore = member.AI_CV_Score__c != null ? member.AI_CV_Score__c.intValue() : null;
             this.aiCvTier = member.AI_CV_Tier__c;

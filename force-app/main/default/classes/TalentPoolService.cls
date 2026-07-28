@@ -42,6 +42,8 @@ public with sharing class TalentPoolService {
         new StatusConfig('Interviewed', true, false, 80),
         
         // Outcome Stage
+        new StatusConfig('Candidate Shortlisted', true, false, 90),
+        new StatusConfig('Candidate Rejected', true, false, 95),
         new StatusConfig('Offered', true, false, 80),             // Offer Made
         new StatusConfig('Placed', true, false, 90),              // Successfully Placed
         

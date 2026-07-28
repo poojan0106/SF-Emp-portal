@@ -1,5 +1,6 @@
 public class AICVEnhancementService {
     private static final String ONBOARDING_TEMPLATE = 'Blakeney_Onboarding_Invitation_Static';
+    private static final String ONBOARDING_CLICK_BASE_URL = System.Label.Blakeney_Onboarding_Click_Base_URL;
 
     public static void enhanceContact(Id contactId) {
         if (contactId == null) return;
@@ -28,6 +29,7 @@ public class AICVEnhancementService {
         putFirstExisting(updateContact, Contact.SObjectType, new List<String>{ 'R_ATS__Candidate_Flags__c', 'Candidate_Flags__c' }, flags);
         putIfFieldExists(updateContact, Contact.SObjectType, 'Marketability_Score__c', marketabilityScore);
         update updateContact;
+        syncCareerIntentSkills(con.Id, normalizedSkills);
 
         try {
             CandidateCVScoringService.scoreCampaignMembersForContact(con.Id);
@@ -36,6 +38,29 @@ public class AICVEnhancementService {
         }
         sendOnboardingInvitation(con.Id, con.Email, summary, normalizedSkills);
         publishEnhancementEvent(con.Id, String.isNotBlank(summary), String.isNotBlank(normalizedSkills));
+    }
+
+    public static void sendCandidateRegistrationInvitation(Id contactId, String email, String firstName) {
+        if (contactId == null || String.isBlank(email) || hasOnboardingEmail(contactId)) return;
+
+        String trackingToken = generateTrackingToken(contactId);
+        String trackingUrl = buildTrackingUrl(trackingToken, contactId);
+        String displayName = String.isNotBlank(firstName) ? firstName : 'there';
+        String subject = 'Welcome to Blakeney';
+        String body = 'Hi ' + displayName + ',\n\n' +
+            'Welcome to Blakeney. Your candidate account is ready.\n\n' +
+            'Complete or review your career profile here:\n' + trackingUrl + '\n\n' +
+            'This helps Blakeney match you with better opportunities and career guidance.';
+
+        Messaging.SingleEmailMessage msg = new Messaging.SingleEmailMessage();
+        msg.setToAddresses(new List<String>{ email });
+        msg.setSubject(subject);
+        msg.setPlainTextBody(body);
+        Messaging.SendEmailResult[] results = Messaging.sendEmail(new Messaging.Email[]{ msg }, false);
+
+        if (results != null && !results.isEmpty() && results[0].isSuccess()) {
+            logEmail(contactId, email, 'Candidate registration onboarding invitation', '', trackingToken, trackingUrl);
+        }
     }
 
     public static String normalizeSkills(String skillsText) {
@@ -59,6 +84,31 @@ public class AICVEnhancementService {
         }
 
         return normalized.isEmpty() ? null : String.join(normalized, ', ');
+    }
+
+    private static void syncCareerIntentSkills(Id contactId, String skillsText) {
+        if (contactId == null || String.isBlank(skillsText) || !Schema.getGlobalDescribe().containsKey('Career_Intent__c')) return;
+
+        try {
+            List<Career_Intent__c> intents = [
+                SELECT Id, Skills__c
+                FROM Career_Intent__c
+                WHERE Contact__c = :contactId OR Candidate__c = :contactId
+                ORDER BY LastModifiedDate DESC
+                LIMIT 1
+            ];
+            Career_Intent__c intent = intents.isEmpty()
+                ? new Career_Intent__c(Contact__c = contactId, Candidate__c = contactId)
+                : intents[0];
+            String normalizedSkills = normalizeSkills(skillsText);
+            if (String.isBlank(normalizedSkills) || intent.Skills__c == normalizedSkills) return;
+
+            intent.Skills__c = normalizedSkills;
+            if (intent.Id == null) insert intent;
+            else update intent;
+        } catch (Exception e) {
+            System.debug(LoggingLevel.WARN, 'Unable to sync Career Intent skills: ' + e.getMessage());
+        }
     }
 
     private static Map<String, Object> enhanceWithClaude(Contact con, String skills, String cvText) {
@@ -154,8 +204,35 @@ public class AICVEnhancementService {
         if (text.contains('gap') || text.contains('career break')) {
             flags.add('Possible employment gap: recruiter should verify dates.');
         }
-        if (countOccurrences(text, 'present') >= 3 || countOccurrences(text, 'current') >= 3) {
-            flags.add('Multiple recent roles mentioned: check job-change frequency.');
+        if (text.contains('lorem ipsum')) {
+            flags.add('Placeholder CV text detected: recruiter should request a real CV before final decision.');
+        }
+
+        List<YearRange> ranges = extractYearRanges(text);
+        if (!ranges.isEmpty()) {
+            Integer currentYear = Date.today().year();
+            Integer recentRoleCount = 0;
+            ranges.sort();
+            for (Integer i = 0; i < ranges.size(); i++) {
+                YearRange range = ranges[i];
+                if (range.startYear >= currentYear - 3 || range.endYear >= currentYear - 3) {
+                    recentRoleCount++;
+                }
+                if (range.endYear > currentYear + 1) {
+                    flags.add('Future-dated work or education range detected: verify CV dates.');
+                }
+                if (i > 0) {
+                    YearRange previous = ranges[i - 1];
+                    if (range.startYear - previous.endYear > 1) {
+                        flags.add('Possible employment gap over 6 months between ' + previous.endYear + ' and ' + range.startYear + '.');
+                    }
+                }
+            }
+            if (recentRoleCount >= 3) {
+                flags.add('Frequent job changes: 3 or more roles appear within the last 3 years.');
+            }
+        } else if (countOccurrences(text, 'present') >= 3 || countOccurrences(text, 'current') >= 3) {
+            flags.add('Multiple current/recent roles mentioned: check job-change frequency.');
         }
         if (flags.isEmpty()) {
             flags.add('No major risk flags detected from available parsed CV text.');
@@ -214,12 +291,14 @@ public class AICVEnhancementService {
     private static void sendOnboardingInvitation(Id contactId, String email, String summary, String skills) {
         if (String.isBlank(email) || hasCompletedCareerIntent(contactId) || hasOnboardingEmail(contactId)) return;
 
+        String trackingToken = generateTrackingToken(contactId);
+        String trackingUrl = buildTrackingUrl(trackingToken, contactId);
         String subject = 'Continue your Blakeney career profile';
         String body = 'Hi,\n\nWe parsed your CV and found these useful signals:\n\n' +
             '- Skills: ' + (String.isBlank(skills) ? 'to be confirmed' : skills) + '\n' +
             '- Summary: ' + firstLine(summary) + '\n\n' +
             'Complete your Blakeney profile so we can match you with better opportunities.\n\n' +
-            'Open Blakeney and continue onboarding.';
+            'Open Blakeney and continue onboarding:\n' + trackingUrl;
 
         Messaging.SingleEmailMessage msg = new Messaging.SingleEmailMessage();
         msg.setToAddresses(new List<String>{ email });
@@ -228,7 +307,7 @@ public class AICVEnhancementService {
         Messaging.SendEmailResult[] results = Messaging.sendEmail(new Messaging.Email[]{ msg }, false);
 
         if (results != null && !results.isEmpty() && results[0].isSuccess()) {
-            logEmail(contactId, email, summary, skills);
+            logEmail(contactId, email, summary, skills, trackingToken, trackingUrl);
         }
     }
 
@@ -248,7 +327,7 @@ public class AICVEnhancementService {
         return countRows > 0;
     }
 
-    private static void logEmail(Id contactId, String email, String summary, String skills) {
+    private static void logEmail(Id contactId, String email, String summary, String skills, String trackingToken, String trackingUrl) {
         if (!Schema.getGlobalDescribe().containsKey('Email_Sent_Log__c')) return;
 
         SObject logRow = Schema.getGlobalDescribe().get('Email_Sent_Log__c').newSObject();
@@ -259,7 +338,20 @@ public class AICVEnhancementService {
         logRow.put('CV_Insights_Referenced__c', 'Skills: ' + skills + '\nSummary: ' + firstLine(summary));
         logRow.put('Link_Clicked__c', false);
         logRow.put('Recipient_Email__c', email);
+        putIfFieldExists(logRow, Schema.getGlobalDescribe().get('Email_Sent_Log__c'), 'Tracking_Token__c', trackingToken);
+        putIfFieldExists(logRow, Schema.getGlobalDescribe().get('Email_Sent_Log__c'), 'Tracking_Url__c', trackingUrl);
         insert logRow;
+    }
+
+    private static String generateTrackingToken(Id contactId) {
+        String seed = String.valueOf(contactId) + ':' + String.valueOf(System.now().getTime()) + ':' + String.valueOf(Crypto.getRandomLong());
+        return EncodingUtil.convertToHex(Crypto.generateDigest('SHA-256', Blob.valueOf(seed))).substring(0, 40);
+    }
+
+    private static String buildTrackingUrl(String trackingToken, Id contactId) {
+        return ONBOARDING_CLICK_BASE_URL +
+            '?token=' + EncodingUtil.urlEncode(trackingToken, 'UTF-8') +
+            '&contactId=' + EncodingUtil.urlEncode(String.valueOf(contactId), 'UTF-8');
     }
 
     private static void publishEnhancementEvent(Id contactId, Boolean summaryGenerated, Boolean skillsNormalized) {
@@ -351,5 +443,50 @@ public class AICVEnhancementService {
             position = haystack.indexOf(needle, position + needle.length());
         }
         return count;
+    }
+
+    private class YearRange implements Comparable {
+        Integer startYear;
+        Integer endYear;
+
+        YearRange(Integer startYear, Integer endYear) {
+            this.startYear = startYear;
+            this.endYear = endYear;
+        }
+
+        public Integer compareTo(Object other) {
+            YearRange rhs = (YearRange) other;
+            if (this.startYear == rhs.startYear) return this.endYear - rhs.endYear;
+            return this.startYear - rhs.startYear;
+        }
+    }
+
+    private static List<YearRange> extractYearRanges(String text) {
+        List<YearRange> ranges = new List<YearRange>();
+        if (String.isBlank(text)) return ranges;
+
+        Pattern rangePattern = Pattern.compile('((?:19|20)\\d{2})\\s*[-\\u2013\\u2014]\\s*((?:19|20)\\d{2}|present|current)');
+        Matcher matcher = rangePattern.matcher(text);
+        Integer currentYear = Date.today().year();
+
+        while (matcher.find()) {
+            Integer startYear = safeYear(matcher.group(1), currentYear);
+            Integer endYear = safeYear(matcher.group(2), currentYear);
+            if (startYear != null && endYear != null && endYear >= startYear) {
+                ranges.add(new YearRange(startYear, endYear));
+            }
+        }
+        return ranges;
+    }
+
+    private static Integer safeYear(String value, Integer currentYear) {
+        if (String.isBlank(value)) return null;
+        String cleaned = value.trim().toLowerCase();
+        if (cleaned == 'present' || cleaned == 'current') return currentYear;
+        try {
+            return Integer.valueOf(cleaned);
+        } catch (Exception e) {
+            return null;
+        }
     }
 }
