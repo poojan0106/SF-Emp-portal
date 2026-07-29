@@ -474,7 +474,7 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
         
         Map<String, Object> body = new Map<String, Object>{
             'model' => CLAUDE_MODEL,
-            'max_tokens' => 4096,
+            'max_tokens' => 8192,
             'messages' => new List<Object>{ userMessage }
         };
         
@@ -580,15 +580,15 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
                 // Assuming you have a custom field for LinkedIn
                 // con.LinkedIn__c = linkedin;
             }
+            String socialLinks = formatSocialProfileLinks(personal);
+            if (String.isNotBlank(socialLinks)) {
+                con.Social_Profile_Links__c = socialLinks;
+            }
             
             // Address
             Map<String, Object> address = (Map<String, Object>) personal.get('address');
             if (address != null) {
-                con.MailingStreet = getString(address, 'street');
-                con.MailingCity = getString(address, 'city');
-                con.MailingState = getString(address, 'state');
-                con.MailingPostalCode = getString(address, 'postalCode');
-                con.MailingCountry = getString(address, 'country');
+                applyMailingAddress(con, address);
             }
         }
         
@@ -680,6 +680,7 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
                 
         // Create work history records if you have a custom object
         createWorkHistoryRecords(con.Id, workHistory);
+        updateContactExperienceFromWorkHistory(con.Id);
         
         // Create education records if you have a custom object
         createEducationRecords(con.Id, education);
@@ -692,7 +693,7 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
 
     private void updateExistingContactFromParsedData(Id contactId, Map<String, Object> data, String fileName) {
         List<Contact> contacts = [
-            SELECT Id, Description, R_ATS__Skills__c
+            SELECT Id, Description, R_ATS__Skills__c, Social_Profile_Links__c
             FROM Contact
             WHERE Id = :contactId
             LIMIT 1
@@ -705,9 +706,22 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
         List<Object> education = (List<Object>) data.get('education');
         List<Object> certifications = (List<Object>) data.get('certifications');
         List<Object> skills = (List<Object>) data.get('skills');
+        Map<String, Object> personal = (Map<String, Object>) data.get('personalInfo');
 
         Contact existingContact = contacts[0];
         Contact con = new Contact(Id = contactId);
+
+        if (personal != null) {
+            String socialLinks = formatSocialProfileLinks(personal);
+            if (String.isNotBlank(socialLinks)) {
+                con.Social_Profile_Links__c = socialLinks;
+            }
+
+            Map<String, Object> address = (Map<String, Object>) personal.get('address');
+            if (address != null) {
+                applyMailingAddress(con, address);
+            }
+        }
 
         if (workHistory != null && !workHistory.isEmpty()) {
             Map<String, Object> currentJob = (Map<String, Object>) workHistory[0];
@@ -759,6 +773,7 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
         );
 
         createWorkHistoryRecords(contactId, workHistory);
+        updateContactExperienceFromWorkHistory(contactId);
         createEducationRecords(contactId, education);
         createCertificationRecords(contactId, certifications);
     }
@@ -896,6 +911,41 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
             String.valueOf(startDate) + '|' +
             String.valueOf(endDate);
     }
+
+    private void updateContactExperienceFromWorkHistory(Id contactId) {
+        if (contactId == null) return;
+
+        Integer totalMonths = 0;
+        for (Work_History__c history : [
+            SELECT Start_Date__c, End_Date__c
+            FROM Work_History__c
+            WHERE Contact__c = :contactId
+        ]) {
+            totalMonths += countWorkHistoryMonths(history.Start_Date__c, history.End_Date__c);
+        }
+
+        if (totalMonths <= 0) return;
+
+        update new Contact(
+            Id = contactId,
+            Years_Experience__c = monthsToYearMonthDecimal(totalMonths)
+        );
+    }
+
+    private Integer countWorkHistoryMonths(Date startDate, Date endDate) {
+        if (startDate == null) return 0;
+        Date effectiveEndDate = endDate == null ? Date.today() : endDate;
+        if (effectiveEndDate < startDate) return 0;
+
+        return Math.max(0, startDate.monthsBetween(effectiveEndDate));
+    }
+
+    private Decimal monthsToYearMonthDecimal(Integer totalMonths) {
+        if (totalMonths == null || totalMonths <= 0) return 0;
+        Integer years = totalMonths / 12;
+        Integer months = Math.mod(totalMonths, 12);
+        return Decimal.valueOf(String.valueOf(years) + '.' + String.valueOf(months));
+    }
     
     // Add this helper method to your class
     private String formatLocationAsText(Map<String, Object> locationMap) {
@@ -977,6 +1027,9 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
             String degree = getString(edu, 'degree');
             String major = getString(edu, 'major');
             String graduationYear = getString(edu, 'graduationYear');
+            EducationParts parts = normalizeEducationParts(degree, major);
+            degree = parts.degree;
+            major = parts.fieldOfStudy;
             String key = educationKey(institution, degree, major, graduationYear);
             if (existingKeys.contains(key)) continue;
             
@@ -1005,6 +1058,94 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
             normalizeKey(degree) + '|' +
             normalizeKey(major) + '|' +
             normalizeKey(graduationYear);
+    }
+
+    private class EducationParts {
+        String degree;
+        String fieldOfStudy;
+        EducationParts(String degree, String fieldOfStudy) {
+            this.degree = degree;
+            this.fieldOfStudy = fieldOfStudy;
+        }
+    }
+
+    private EducationParts normalizeEducationParts(String rawDegree, String rawField) {
+        String degree = cleanEducationText(rawDegree);
+        String field = cleanEducationText(rawField);
+
+        if (String.isNotBlank(field)) {
+            degree = removeFieldFromDegree(degree, field);
+            return new EducationParts(cleanDegreeName(degree), field);
+        }
+
+        EducationParts split = splitDegreeAndField(degree);
+        return new EducationParts(cleanDegreeName(split.degree), split.fieldOfStudy);
+    }
+
+    private String cleanEducationText(String value) {
+        if (String.isBlank(value)) return '';
+        return value.trim().replaceAll('\\s+', ' ');
+    }
+
+    private String removeFieldFromDegree(String degree, String field) {
+        if (String.isBlank(degree) || String.isBlank(field)) return degree;
+        String escapedField = Pattern.quote(field);
+        String cleaned = degree
+            .replaceAll('(?i)\\s+(majoring in|majored in|major in|specialization in|specialized in|specializing in|concentration in|concentrated in|focus in|focused in|emphasis in|option in|stream in|track in|pathway in|discipline of|field of|program in|course in|degree in|honours in|honors in|minor in|double major in|in|for|with)\\s+' + escapedField + '$', '')
+            .replaceAll('(?i)\\s*[-–—:,/]\\s*' + escapedField + '$', '')
+            .replaceAll('(?i)\\s*\\(\\s*' + escapedField + '\\s*\\)\\s*$', '')
+            .trim();
+        return String.isBlank(cleaned) ? degree : cleaned;
+    }
+
+    private EducationParts splitDegreeAndField(String degree) {
+        if (String.isBlank(degree)) return new EducationParts('', '');
+
+        List<String> separatorPatterns = new List<String>{
+            '\\s+majoring in\\s+', '\\s+majored in\\s+', '\\s+major in\\s+',
+            '\\s+specialization in\\s+', '\\s+specialized in\\s+', '\\s+specializing in\\s+',
+            '\\s+concentration in\\s+', '\\s+concentrated in\\s+', '\\s+focus in\\s+', '\\s+focused in\\s+',
+            '\\s+emphasis in\\s+', '\\s+option in\\s+', '\\s+stream in\\s+', '\\s+track in\\s+',
+            '\\s+pathway in\\s+', '\\s+discipline of\\s+', '\\s+field of\\s+', '\\s+program in\\s+',
+            '\\s+course in\\s+', '\\s+degree in\\s+', '\\s+honours in\\s+', '\\s+honors in\\s+',
+            '\\s+minor in\\s+', '\\s+double major in\\s+', '\\s+in\\s+', '\\s+for\\s+', '\\s+with\\s+',
+            '\\s*[-–—:]\\s+', '\\s*,\\s+'
+        };
+
+        for (String pattern : separatorPatterns) {
+            List<String> pieces = degree.split('(?i)' + pattern, 2);
+            if (pieces.size() == 2 && String.isNotBlank(pieces[0]) && String.isNotBlank(pieces[1])) {
+                return new EducationParts(cleanEducationText(pieces[0]), cleanEducationText(pieces[1]));
+            }
+        }
+
+        Matcher parenMatcher = Pattern.compile('^(.+?)\\s*\\(([^)]+)\\)\\s*$').matcher(degree);
+        if (parenMatcher.matches()) {
+            return new EducationParts(cleanEducationText(parenMatcher.group(1)), cleanEducationText(parenMatcher.group(2)));
+        }
+
+        List<String> degreePrefixes = new List<String>{
+            'B.A.', 'B.A', 'BA', 'B.S.', 'B.S', 'BS', 'B.Sc.', 'B.Sc', 'BSc',
+            'B.Tech', 'BTech', 'B.E.', 'B.E', 'BE', 'M.A.', 'M.A', 'MA',
+            'M.S.', 'M.S', 'MS', 'M.Sc.', 'M.Sc', 'MSc', 'M.Tech', 'MTech', 'MBA'
+        };
+        for (String prefix : degreePrefixes) {
+            if (degree.toLowerCase().startsWith(prefix.toLowerCase() + ' ')) {
+                return new EducationParts(prefix, cleanEducationText(degree.substring(prefix.length())));
+            }
+        }
+
+        return new EducationParts(degree, '');
+    }
+
+    private String cleanDegreeName(String degree) {
+        if (String.isBlank(degree)) return '';
+        String normalized = cleanEducationText(degree);
+        if (normalized == 'B.A') return 'B.A.';
+        if (normalized == 'B.S') return 'B.S.';
+        if (normalized == 'M.A') return 'M.A.';
+        if (normalized == 'M.S') return 'M.S.';
+        return normalized;
     }
     
     /**
@@ -1062,9 +1203,15 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
             'IMPORTANT:\n' +
             '- Extract EVERY job position from work/professional experience section\n' +
             '- Extract EVERY education entry (degrees, universities)\n' +
+            '- For education, split degree and field of study. Example: "B.A. in Art & Design" => degree "B.A.", major "Art & Design". Store only degree/course name in degree. Store course/field in major.\n' +
+            '- Education connector words include: in, for, with, major in, majoring in, majored in, specialization in, specialized in, specializing in, concentration in, concentrated in, focus in, focused in, emphasis in, option in, stream in, track in, pathway in, discipline of, field of, program in, course in, degree in, honours in, honors in, minor in, double major in. Also split on parentheses, hyphen, colon, slash, comma when used between degree and field.\n' +
+            '- Do NOT create duplicate education entries for same institution + graduationYear + fieldOfStudy. If one line says "B.A. in Art & Design", return one record only: degree "B.A.", major "Art & Design". Do not also return "B.A. in Art & Design" as another degree.\n' +
+            '- Extract candidate mailing address when present. Split street, city, state/province, postalCode, country.\n' +
+            '- Infer missing country/state from obvious address clues. Example: "1 Crown Street\\nSydney NSW 2000" => street "1 Crown Street", city "Sydney", state "NSW", postalCode "2000", country "Australia". Australian states include NSW, VIC, QLD, SA, WA, TAS, NT, ACT.\n' +
+            '- If country is missing but city/state/postcode clearly identify Australia, set country to "Australia".\n' +
             '- Extract job locations (city, state, country)\n' +
             '- Calculate total professional experience in years from work history dates and return numeric totalYearsExperience\n' +
-            '- Convert job descriptions into numbered bullet points\n' +
+            '- Convert job descriptions into numbered bullet points. Keep each job description under 700 characters.\n' +
             '- Do NOT skip any entries\n\n' +
             'Return ONLY a valid JSON object with this EXACT structure:\n' +
             '{\n' +
@@ -1075,6 +1222,7 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
             '    "phone": "string",\n' +
             '    "mobile": "string",\n' +
             '    "linkedIn": "string",\n' +
+            '    "socialProfiles": { "LinkedIn": "url", "Instagram": "url", "Facebook": "url", "SEEK": "url", "GitHub": "url", "Portfolio": "url", "Website": "url", "Other": "url" },\n' +
             '    "address": { "street": "string", "city": "string", "state": "string", "postalCode": "string", "country": "string" }\n' +
             '  },\n' +
             '  "workHistory": [\n' +
@@ -1099,7 +1247,7 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
             '  "certifications": ["cert1", "cert2"],\n' +
             '  "summary": "2-3 sentence professional summary",\n' +
             '  "totalYearsExperience": 0,\n' +
-            '  "extractedText": "FULL TEXT OF THE CV WITH PROPER FORMATTING - preserve line breaks using \\n, preserve section headers, preserve bullet points, maintain the original structure and readability of the document"\n' +
+            '  "extractedText": "READABLE CV TEXT SUMMARY WITH SECTION HEADERS - max 8000 characters, preserve line breaks using \\n"\n' +
             '}\n\n' +
             'RULES:\n' +
             '1. Extract ALL jobs - this CV should have multiple positions\n' +
@@ -1110,13 +1258,15 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
             '6. Use \\n to separate lines, description and sections in all text fields\n' +
             '7. Convert month names to numbers (June=06, August=08)\n' +
             '8. Use "" for missing strings, [] for missing arrays, {"city":"","state":"","country":""} for missing location\n' +
-            '9. For extractedText: Include the COMPLETE readable text from the CV\n' +
+            '9. Extract all social profile links from CV into personalInfo.socialProfiles. Include LinkedIn, Instagram, Facebook, SEEK, GitHub, portfolio, website, or other profile URLs.\n' +
+            '10. For extractedText: Include readable CV text, max 8000 characters. Preserve section headers and key lines only.\n' +
             '   - Preserve all section headers (e.g., "EXPERIENCE", "EDUCATION", "SKILLS")\n' +
             '   - Use \\n for line breaks\n' +
             '   - Use \\n\\n for section breaks\n' +
             '   - Preserve bullet points as "• " or "- "\n' +
             '   - Keep the original formatting structure\n' +
-            '9. Return ONLY JSON - no markdown, no explanation';
+            '11. JSON must be complete and valid. Do not truncate arrays or strings.\n' +
+            '12. Return ONLY JSON - no markdown, no explanation';
     }
     
     // ==================== HELPER METHODS ====================
@@ -1175,6 +1325,98 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
     private String getString(Map<String, Object> maps, String key) {
         Object value = maps.get(key);
         return value != null ? String.valueOf(value) : '';
+    }
+
+    private String formatSocialProfileLinks(Map<String, Object> personal) {
+        if (personal == null) return null;
+
+        Map<String, String> profiles = new Map<String, String>();
+        String linkedIn = getString(personal, 'linkedIn');
+        if (String.isNotBlank(linkedIn)) profiles.put('LinkedIn', linkedIn);
+
+        Object socialObject = personal.get('socialProfiles');
+        if (socialObject != null) {
+            try {
+                Map<String, Object> socialProfiles = (Map<String, Object>) socialObject;
+                for (String label : socialProfiles.keySet()) {
+                    String url = String.valueOf(socialProfiles.get(label));
+                    if (String.isBlank(label) || String.isBlank(url)) continue;
+                    profiles.put(normalizeSocialProfileLabel(label), url.trim());
+                }
+            } catch (Exception socialException) {
+                System.debug('Unable to parse social profiles: ' + socialException.getMessage());
+            }
+        }
+
+        List<String> lines = new List<String>();
+        for (String label : new List<String>{'LinkedIn', 'Instagram', 'Facebook', 'SEEK', 'GitHub', 'Portfolio', 'Website', 'Other'}) {
+            String url = profiles.get(label);
+            if (String.isNotBlank(url)) lines.add(label + ' : ' + url);
+        }
+        for (String label : profiles.keySet()) {
+            if (!new Set<String>{'LinkedIn', 'Instagram', 'Facebook', 'SEEK', 'GitHub', 'Portfolio', 'Website', 'Other'}.contains(label)) {
+                String url = profiles.get(label);
+                if (String.isNotBlank(url)) lines.add(label + ' : ' + url);
+            }
+        }
+        return lines.isEmpty() ? null : String.join(lines, '\n');
+    }
+
+    private String normalizeSocialProfileLabel(String label) {
+        if (String.isBlank(label)) return 'Other';
+        String lowerLabel = label.trim().toLowerCase();
+        if (lowerLabel.contains('linkedin')) return 'LinkedIn';
+        if (lowerLabel.contains('instagram')) return 'Instagram';
+        if (lowerLabel.contains('facebook')) return 'Facebook';
+        if (lowerLabel.contains('seek')) return 'SEEK';
+        if (lowerLabel.contains('github')) return 'GitHub';
+        if (lowerLabel.contains('portfolio')) return 'Portfolio';
+        if (lowerLabel.contains('website')) return 'Website';
+        return label.trim();
+    }
+
+    private void applyMailingAddress(Contact con, Map<String, Object> address) {
+        if (con == null || address == null) return;
+        String street = getString(address, 'street');
+        String city = getString(address, 'city');
+        String state = normalizeAustralianState(getString(address, 'state'));
+        String postalCode = getString(address, 'postalCode');
+        String country = getString(address, 'country');
+
+        if (String.isBlank(country) && isAustralianAddress(city, state, postalCode)) {
+            country = 'Australia';
+        }
+
+        con.MailingStreet = street;
+        con.MailingCity = city;
+        con.MailingState = state;
+        con.MailingPostalCode = postalCode;
+        con.MailingCountry = country;
+    }
+
+    private String normalizeAustralianState(String value) {
+        if (String.isBlank(value)) return value;
+        String state = value.trim();
+        String upperState = state.toUpperCase();
+        if (upperState == 'NEW SOUTH WALES') return 'NSW';
+        if (upperState == 'VICTORIA') return 'VIC';
+        if (upperState == 'QUEENSLAND') return 'QLD';
+        if (upperState == 'SOUTH AUSTRALIA') return 'SA';
+        if (upperState == 'WESTERN AUSTRALIA') return 'WA';
+        if (upperState == 'TASMANIA') return 'TAS';
+        if (upperState == 'NORTHERN TERRITORY') return 'NT';
+        if (upperState == 'AUSTRALIAN CAPITAL TERRITORY') return 'ACT';
+        return state;
+    }
+
+    private Boolean isAustralianAddress(String city, String state, String postalCode) {
+        Set<String> states = new Set<String>{'NSW', 'VIC', 'QLD', 'SA', 'WA', 'TAS', 'NT', 'ACT'};
+        if (String.isNotBlank(state) && states.contains(state.trim().toUpperCase())) return true;
+        if (String.isNotBlank(postalCode)) {
+            String cleanPostcode = postalCode.trim();
+            if (Pattern.matches('^[0-9]{4}$', cleanPostcode) && String.isNotBlank(city)) return true;
+        }
+        return false;
     }
 
     private Decimal parseDecimal(Object value) {
