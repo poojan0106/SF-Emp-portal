@@ -34,9 +34,10 @@ public class CandidateMatchingService {
         Set<Id> notifiedContactIds = new Set<Id>();
         List<NotificationService.NotificationRequest> notificationRequests = new List<NotificationService.NotificationRequest>();
 
+        Decimal matchThreshold = getQuestionnaireThreshold();
         for (CampaignMember member : scoredMembers) {
             Decimal score = member.AI_CV_Score__c == null ? 0 : member.AI_CV_Score__c;
-            if (score >= 70 && member.ContactId != null && !notifiedContactIds.contains(member.ContactId)) {
+            if (score >= matchThreshold && member.ContactId != null && !notifiedContactIds.contains(member.ContactId)) {
                 matchingCount++;
                 notifiedContactIds.add(member.ContactId);
 
@@ -63,5 +64,20 @@ public class CandidateMatchingService {
 
     public static void calculateMatchScore(Id campaignMemberId) {
         CandidateCVScoringService.scoreCampaignMember(campaignMemberId);
+    }
+
+    private static Decimal getQuestionnaireThreshold() {
+        if (!Schema.getGlobalDescribe().containsKey('Scoring_Configuration__mdt')) return 70;
+        try {
+            List<SObject> rows = Database.query(
+                'SELECT Questionnaire_Threshold__c FROM Scoring_Configuration__mdt WHERE DeveloperName = \'Default\' LIMIT 1'
+            );
+            if (!rows.isEmpty() && rows[0].get('Questionnaire_Threshold__c') != null) {
+                return (Decimal) rows[0].get('Questionnaire_Threshold__c');
+            }
+        } catch (Exception e) {
+            System.debug(LoggingLevel.WARN, 'CandidateMatchingService scoring threshold fallback used: ' + e.getMessage());
+        }
+        return 70;
     }
 }

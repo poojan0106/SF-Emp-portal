@@ -120,11 +120,12 @@ global without sharing class EmployerDashboardController {
                 AND Status = 'Interview Confirmed'];
             System.debug('Pending Offers: ' + data.pendingOffers);
             
+            Decimal scoreThreshold = getScoreThreshold();
             data.readyForInterview = [SELECT COUNT() FROM CampaignMember 
                 WHERE Campaign.Employer__c = :accountId 
                 AND Campaign.Status = 'Active'
                 AND Campaign.IsActive = true
-                AND AI_CV_Score__c >= 80
+                AND AI_CV_Score__c >= :scoreThreshold
                 AND Interview_Requested__c = false
                 AND Status = 'In League'];
 
@@ -221,11 +222,12 @@ global without sharing class EmployerDashboardController {
             List<FlintRecommendation> recommendations = new List<FlintRecommendation>();
             
             // Check for candidates ready for interview
+            Decimal scoreThreshold = getScoreThreshold();
             Integer readyForInterview = [SELECT COUNT() FROM CampaignMember 
                 WHERE Campaign.Employer__c = :accountId 
                 AND Campaign.Status = 'Active'
                 AND Campaign.IsActive = true
-                AND AI_CV_Score__c >= 80
+                AND AI_CV_Score__c >= :scoreThreshold
                 AND Interview_Requested__c = false
                 AND Status = 'In League'];
             System.debug('Ready for Interview count: ' + readyForInterview);
@@ -449,5 +451,20 @@ global without sharing class EmployerDashboardController {
             this.eventDate = eventDate;
             this.eventType = eventType;
         }
+    }
+
+    private static Decimal getScoreThreshold() {
+        if (!Schema.getGlobalDescribe().containsKey('Scoring_Configuration__mdt')) return 70;
+        try {
+            List<SObject> rows = Database.query(
+                'SELECT Questionnaire_Threshold__c FROM Scoring_Configuration__mdt WHERE DeveloperName = \'Default\' LIMIT 1'
+            );
+            if (!rows.isEmpty() && rows[0].get('Questionnaire_Threshold__c') != null) {
+                return (Decimal) rows[0].get('Questionnaire_Threshold__c');
+            }
+        } catch (Exception e) {
+            System.debug(LoggingLevel.WARN, 'Dashboard scoring threshold fallback used: ' + e.getMessage());
+        }
+        return 70;
     }
 }

@@ -193,7 +193,15 @@ public with sharing class ClaudeAPIService {
             req.setTimeout(60000);
             
             Http http = new Http();
-            HttpResponse res = http.send(req);
+            Long started = DateTime.now().getTime();
+            HttpResponse res;
+            try {
+                res = http.send(req);
+            } catch (Exception calloutException) {
+                logHttpFailure('Job Detail Extraction', req.getBody(), calloutException.getMessage(), started);
+                throw calloutException;
+            }
+            logHttpCall('Job Detail Extraction', req.getBody(), res, started);
             
             if (res.getStatusCode() != 200) {
                 System.debug(LoggingLevel.ERROR, 'Extraction API error: ' + res.getStatusCode());
@@ -336,7 +344,15 @@ public with sharing class ClaudeAPIService {
         System.debug('Calling Claude API with prefill...');
         
         Http http = new Http();
-        return http.send(req);
+        Long started = DateTime.now().getTime();
+        try {
+            HttpResponse res = http.send(req);
+            logHttpCall('Flint Job Intake', req.getBody(), res, started);
+            return res;
+        } catch (Exception calloutException) {
+            logHttpFailure('Flint Job Intake', req.getBody(), calloutException.getMessage(), started);
+            throw calloutException;
+        }
     }
 
     private static HttpResponse callClaudeAPI(
@@ -382,7 +398,16 @@ public with sharing class ClaudeAPIService {
         req.setBody(JSON.serialize(requestBody));
 
         Http http = new Http();
-        return http.send(req);
+        Long started = DateTime.now().getTime();
+        HttpResponse res;
+        try {
+            res = http.send(req);
+        } catch (Exception calloutException) {
+            logHttpFailure('Chat Completion', req.getBody(), calloutException.getMessage(), started);
+            throw calloutException;
+        }
+        logHttpCall('Chat Completion', req.getBody(), res, started);
+        return res;
     }
     
     /**
@@ -454,6 +479,58 @@ public with sharing class ClaudeAPIService {
             cleaned = cleaned.substring(startIndex, endIndex + 1);
         }
         return cleaned;
+    }
+
+    private static void logHttpCall(String operation, String requestPayload, HttpResponse response, Long started) {
+        try {
+            AIAPILogService.LogEntry entry = new AIAPILogService.LogEntry();
+            entry.operation = operation;
+            entry.requestType = AIAPILogService.requestTypeForOperation(operation);
+            entry.requestPayload = requestPayload;
+            entry.responsePayload = response == null ? null : response.getBody();
+            entry.status = response != null && response.getStatusCode() >= 200 && response.getStatusCode() < 300 ? 'Success' : 'Failed';
+            entry.errorMessage = entry.status == 'Failed' && response != null ? 'Claude API HTTP ' + response.getStatusCode() : null;
+            entry.model = DEFAULT_MODEL;
+            entry.durationMs = Integer.valueOf(String.valueOf(DateTime.now().getTime() - started));
+            entry.httpStatusCode = response == null ? null : response.getStatusCode();
+            if (response != null && String.isNotBlank(response.getBody()) && response.getStatusCode() == 200) {
+                Map<String, Object> respBody = (Map<String, Object>) JSON.deserializeUntyped(response.getBody());
+                Map<String, Object> usage = (Map<String, Object>) respBody.get('usage');
+                if (usage != null) {
+                    entry.inputTokens = integerValue(usage.get('input_tokens'));
+                    entry.outputTokens = integerValue(usage.get('output_tokens'));
+                    entry.totalTokens = (entry.inputTokens == null ? 0 : entry.inputTokens) + (entry.outputTokens == null ? 0 : entry.outputTokens);
+                }
+            }
+            AIAPILogService.logClaudeCall(entry);
+        } catch (Exception e) {
+            System.debug(LoggingLevel.WARN, 'Claude API log skipped: ' + e.getMessage());
+        }
+    }
+
+    private static void logHttpFailure(String operation, String requestPayload, String errorMessage, Long started) {
+        try {
+            AIAPILogService.LogEntry entry = new AIAPILogService.LogEntry();
+            entry.operation = operation;
+            entry.requestType = AIAPILogService.requestTypeForOperation(operation);
+            entry.requestPayload = requestPayload;
+            entry.status = 'Failed';
+            entry.errorMessage = errorMessage;
+            entry.model = DEFAULT_MODEL;
+            entry.durationMs = Integer.valueOf(String.valueOf(DateTime.now().getTime() - started));
+            AIAPILogService.logClaudeCall(entry);
+        } catch (Exception e) {
+            System.debug(LoggingLevel.WARN, 'Claude API failure log skipped: ' + e.getMessage());
+        }
+    }
+
+    private static Integer integerValue(Object value) {
+        if (value == null) return null;
+        try {
+            return Integer.valueOf(String.valueOf(value));
+        } catch (Exception e) {
+            return null;
+        }
     }
     
     /**

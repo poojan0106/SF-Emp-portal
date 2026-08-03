@@ -2,6 +2,7 @@ public class CandidateCVScoringService {
     public static void scoreCampaignMembersForContact(Id contactId) {
         if (contactId == null) return;
 
+        Long started = DateTime.now().getTime();
         List<CampaignMember> members = fetchMembers(contactId);
         if (members.isEmpty()) return;
 
@@ -14,6 +15,8 @@ public class CandidateCVScoringService {
 
         Map<Id, Contact> contacts = fetchContacts(contactIds);
         Map<Id, Campaign> campaigns = fetchCampaigns(campaignIds);
+        ScoringConfig config = loadConfig();
+        ensureCampaignMemberStatus(campaignIds, 'CV Review Required');
 
         List<CampaignMember> updates = new List<CampaignMember>();
         for (CampaignMember member : members) {
@@ -21,7 +24,7 @@ public class CandidateCVScoringService {
             Campaign campaign = campaigns.get(member.CampaignId);
             if (candidate == null || campaign == null) continue;
 
-            ScoreResult result = calculate(candidate, campaign, member);
+            ScoreResult result = calculate(candidate, campaign, member, config);
             CampaignMember updateMember = new CampaignMember(Id = member.Id);
             putIfFieldExists(updateMember, CampaignMember.SObjectType, 'AI_CV_Score__c', result.score);
             putIfFieldExists(updateMember, CampaignMember.SObjectType, 'AI_CV_Tier__c', result.tier);
@@ -29,14 +32,39 @@ public class CandidateCVScoringService {
             putIfFieldExists(updateMember, CampaignMember.SObjectType, 'AI_Protected_Summary__c', buildProtectedSummary(candidate, result));
             putIfFieldExists(updateMember, CampaignMember.SObjectType, 'AI_Protected_Experience__c', buildProtectedExperience(candidate));
             putIfFieldExists(updateMember, CampaignMember.SObjectType, 'AI_Protected_Skills__c', value(candidate, 'R_ATS__Skills__c'));
+            if (result.score < config.questionnaireThreshold) {
+                updateMember.Status = 'CV Review Required';
+            }
 
             Decimal questionnaire = decimalValue(member, 'Questionnaire_Score__c');
-            Decimal combined = questionnaire == null ? result.score : ((result.score * 0.4) + (questionnaire * 0.6));
+            Decimal combined = calculateCombinedScore(result.score, questionnaire, config);
             putIfFieldExists(updateMember, CampaignMember.SObjectType, 'Combined_Score__c', clamp(combined));
             updates.add(updateMember);
         }
 
-        if (!updates.isEmpty()) update updates;
+        if (!updates.isEmpty()) {
+            try {
+                update updates;
+                AIAPILogService.logSuccess(
+                    'CV Scoring',
+                    contactId,
+                    null,
+                    'CampaignMembers scored: ' + updates.size(),
+                    'Success',
+                    Integer.valueOf(String.valueOf(DateTime.now().getTime() - started))
+                );
+            } catch (Exception e) {
+                AIAPILogService.logFailure(
+                    'CV Scoring',
+                    contactId,
+                    null,
+                    'CampaignMembers scored: ' + updates.size(),
+                    e.getMessage(),
+                    Integer.valueOf(String.valueOf(DateTime.now().getTime() - started))
+                );
+                throw e;
+            }
+        }
     }
 
     public static void scoreCampaignMember(Id campaignMemberId) {
@@ -90,39 +118,39 @@ public class CandidateCVScoringService {
         return new Map<Id, Campaign>((List<Campaign>) Database.query(soql));
     }
 
-    private static ScoreResult calculate(Contact candidate, Campaign campaign, CampaignMember member) {
+    private static ScoreResult calculate(Contact candidate, Campaign campaign, CampaignMember member, ScoringConfig config) {
         Decimal skills = scoreSkills(value(candidate, 'R_ATS__Skills__c'),
-            value(campaign, 'Must_Have_Skills__c'), value(campaign, 'Nice_To_Have_Skills__c'));
-        Decimal experience = scoreExperience(decimalValue(candidate, 'Years_Experience__c'), value(campaign, 'Job_Seniority__c'));
-        Decimal location = scoreLocation(candidate, value(campaign, 'Location_Requirement__c'));
-        Decimal salary = scoreSalary(candidate, campaign);
+            value(campaign, 'Must_Have_Skills__c'), value(campaign, 'Nice_To_Have_Skills__c'), config);
+        Decimal experience = scoreExperience(decimalValue(candidate, 'Years_Experience__c'), value(campaign, 'Job_Seniority__c'), config);
+        Decimal location = scoreLocation(candidate, value(campaign, 'Location_Requirement__c'), config);
+        Decimal salary = scoreSalary(candidate, campaign, config);
 
         Decimal total = clamp(skills + experience + location + salary);
         ScoreResult result = new ScoreResult();
         result.score = total;
-        result.tier = total >= 70 ? 'Potential Match' : total >= 40 ? 'Review Required' : 'Poor Match';
+        result.tier = total >= config.potentialMatchMin ? 'Potential Match' : total >= config.reviewRequiredMin ? 'Review Required' : 'Poor Match';
         result.explanation =
-            'Skills Match: ' + skills + '/40\n' +
-            'Experience: ' + experience + '/30\n' +
-            'Location: ' + location + '/15\n' +
-            'Salary Fit: ' + salary + '/15\n' +
+            'Skills Match: ' + skills + '/' + config.skillsWeightTotal + '\n' +
+            'Experience: ' + experience + '/' + config.experienceWeight + '\n' +
+            'Location: ' + location + '/' + config.locationWeight + '\n' +
+            'Salary Fit: ' + salary + '/' + config.salaryWeight + '\n' +
             'Strengths/gaps generated from available Campaign and Contact fields.';
         return result;
     }
 
-    private static Decimal scoreSkills(String candidateSkillsText, String mustText, String niceText) {
+    private static Decimal scoreSkills(String candidateSkillsText, String mustText, String niceText, ScoringConfig config) {
         List<String> candidateSkills = parseSkills(candidateSkillsText);
         List<String> must = parseSkills(mustText);
         List<String> nice = parseSkills(niceText);
         if (candidateSkills.isEmpty() || (must.isEmpty() && nice.isEmpty())) return 0;
 
         Decimal score = 0;
-        if (!must.isEmpty()) score += 30 * matchRatio(candidateSkills, must);
-        if (!nice.isEmpty()) score += 10 * matchRatio(candidateSkills, nice);
-        return clampPart(score, 40);
+        if (!must.isEmpty()) score += config.skillsWeight * matchRatio(candidateSkills, must);
+        if (!nice.isEmpty()) score += config.skillsNiceToHaveWeight * matchRatio(candidateSkills, nice);
+        return clampPart(score, config.skillsWeightTotal);
     }
 
-    private static Decimal scoreExperience(Decimal years, String seniority) {
+    private static Decimal scoreExperience(Decimal years, String seniority, ScoringConfig config) {
         if (years == null || String.isBlank(seniority)) return 0;
         String level = String.isBlank(seniority) ? '' : seniority.toLowerCase();
         Decimal target = 2;
@@ -130,21 +158,21 @@ public class CandidateCVScoringService {
         if (level.contains('senior')) target = 5;
         if (level.contains('lead') || level.contains('executive')) target = 8;
         Decimal ratio = years / target;
-        return clampPart(30 * (ratio > 1 ? 1 : ratio), 30);
+        return clampPart(config.experienceWeight * (ratio > 1 ? 1 : ratio), config.experienceWeight);
     }
 
-    private static Decimal scoreLocation(Contact candidate, String jobLocation) {
+    private static Decimal scoreLocation(Contact candidate, String jobLocation, ScoringConfig config) {
         if (String.isBlank(jobLocation)) return 0;
         String haystack = (String.valueOf(candidate.MailingCity) + ' ' +
             String.valueOf(candidate.MailingState) + ' ' + String.valueOf(candidate.MailingCountry)).toLowerCase();
         if (String.isBlank(haystack.replace('null', '').trim())) return 0;
         for (String token : jobLocation.toLowerCase().split('[,;\\s]+')) {
-            if (String.isNotBlank(token) && haystack.contains(token)) return 15;
+            if (String.isNotBlank(token) && haystack.contains(token)) return config.locationWeight;
         }
         return 0;
     }
 
-    private static Decimal scoreSalary(Contact candidate, Campaign campaign) {
+    private static Decimal scoreSalary(Contact candidate, Campaign campaign, ScoringConfig config) {
         Decimal candidateMin = firstDecimalValue(candidate, new List<String>{
             'R_ATS__Minimum_Salary__c',
             'Min_Salary_Expectation__c',
@@ -165,7 +193,7 @@ public class CandidateCVScoringService {
         Decimal jobLow = jobMin == null ? jobMax : jobMin;
         Decimal jobHigh = jobMax == null ? jobMin : jobMax;
         Boolean overlaps = low <= jobHigh && high >= jobLow;
-        return overlaps ? 15 : 0;
+        return overlaps ? config.salaryWeight : 0;
     }
 
     private static String buildProtectedSummary(Contact candidate, ScoreResult result) {
@@ -219,6 +247,15 @@ public class CandidateCVScoringService {
         return score.setScale(0);
     }
 
+    private static Decimal calculateCombinedScore(Decimal cvScore, Decimal questionnaireScore, ScoringConfig config) {
+        if (questionnaireScore == null) return cvScore;
+        Decimal cvWeight = config.cvScoreWeight == null ? 0 : config.cvScoreWeight;
+        Decimal questionnaireWeight = config.questionnaireScoreWeight == null ? 0 : config.questionnaireScoreWeight;
+        Decimal totalWeight = cvWeight + questionnaireWeight;
+        if (totalWeight <= 0) return cvScore;
+        return ((cvScore * cvWeight) + (questionnaireScore * questionnaireWeight)) / totalWeight;
+    }
+
     private static void addIfFieldExists(Set<String> fields, Schema.SObjectType typeRef, String fieldName) {
         if (typeRef.getDescribe().fields.getMap().containsKey(fieldName)) fields.add(fieldName);
     }
@@ -256,9 +293,83 @@ public class CandidateCVScoringService {
         return null;
     }
 
+    private static ScoringConfig loadConfig() {
+        ScoringConfig config = new ScoringConfig();
+        if (!Schema.getGlobalDescribe().containsKey('Scoring_Configuration__mdt')) return config;
+
+        try {
+            List<SObject> rows = Database.query(
+                'SELECT Skills_Weight_Total__c, Skills_Weight__c, Skills_Weight_Nice_To_Have__c, ' +
+                'Experience_Weight__c, Location_Weight__c, Salary_Weight__c, CV_Score_Weight__c, ' +
+                'Questionnaire_Score_Weight__c, Questionnaire_Threshold__c, ' +
+                'Potential_Match_Min__c, Review_Required_Min__c, Poor_Match_Max__c ' +
+                'FROM Scoring_Configuration__mdt WHERE DeveloperName = \'Default\' LIMIT 1'
+            );
+            if (rows.isEmpty()) return config;
+            SObject row = rows[0];
+            config.skillsWeightTotal = fallback(decimalValue(row, 'Skills_Weight_Total__c'), config.skillsWeightTotal);
+            config.skillsWeight = fallback(decimalValue(row, 'Skills_Weight__c'), config.skillsWeight);
+            config.skillsNiceToHaveWeight = fallback(decimalValue(row, 'Skills_Weight_Nice_To_Have__c'), config.skillsNiceToHaveWeight);
+            config.experienceWeight = fallback(decimalValue(row, 'Experience_Weight__c'), config.experienceWeight);
+            config.locationWeight = fallback(decimalValue(row, 'Location_Weight__c'), config.locationWeight);
+            config.salaryWeight = fallback(decimalValue(row, 'Salary_Weight__c'), config.salaryWeight);
+            config.cvScoreWeight = fallback(decimalValue(row, 'CV_Score_Weight__c'), config.cvScoreWeight);
+            config.questionnaireScoreWeight = fallback(decimalValue(row, 'Questionnaire_Score_Weight__c'), config.questionnaireScoreWeight);
+            config.questionnaireThreshold = fallback(decimalValue(row, 'Questionnaire_Threshold__c'), config.questionnaireThreshold);
+            config.potentialMatchMin = fallback(decimalValue(row, 'Potential_Match_Min__c'), config.potentialMatchMin);
+            config.reviewRequiredMin = fallback(decimalValue(row, 'Review_Required_Min__c'), config.reviewRequiredMin);
+            config.poorMatchMax = fallback(decimalValue(row, 'Poor_Match_Max__c'), config.poorMatchMax);
+        } catch (Exception e) {
+            System.debug(LoggingLevel.WARN, 'Scoring config fallback used: ' + e.getMessage());
+        }
+        return config;
+    }
+
+    private static Decimal fallback(Decimal value, Decimal fallbackValue) {
+        return value == null ? fallbackValue : value;
+    }
+
+    private static void ensureCampaignMemberStatus(Set<Id> campaignIds, String statusLabel) {
+        if (campaignIds == null || campaignIds.isEmpty() || String.isBlank(statusLabel)) return;
+        Set<Id> missing = new Set<Id>(campaignIds);
+        for (CampaignMemberStatus existing : [
+            SELECT CampaignId
+            FROM CampaignMemberStatus
+            WHERE CampaignId IN :campaignIds AND Label = :statusLabel
+        ]) {
+            missing.remove(existing.CampaignId);
+        }
+        List<CampaignMemberStatus> inserts = new List<CampaignMemberStatus>();
+        for (Id campaignId : missing) {
+            inserts.add(new CampaignMemberStatus(
+                CampaignId = campaignId,
+                Label = statusLabel,
+                SortOrder = 10,
+                HasResponded = true,
+                IsDefault = false
+            ));
+        }
+        if (!inserts.isEmpty()) insert inserts;
+    }
+
     private class ScoreResult {
         Decimal score;
         String tier;
         String explanation;
+    }
+
+    private class ScoringConfig {
+        Decimal skillsWeightTotal = 40;
+        Decimal skillsWeight = 30;
+        Decimal skillsNiceToHaveWeight = 10;
+        Decimal experienceWeight = 30;
+        Decimal locationWeight = 15;
+        Decimal salaryWeight = 15;
+        Decimal cvScoreWeight = 40;
+        Decimal questionnaireScoreWeight = 60;
+        Decimal questionnaireThreshold = 70;
+        Decimal potentialMatchMin = 70;
+        Decimal reviewRequiredMin = 40;
+        Decimal poorMatchMax = 39;
     }
 }

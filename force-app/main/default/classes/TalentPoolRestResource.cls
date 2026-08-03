@@ -17,6 +17,8 @@ global with sharing class TalentPoolRestResource {
             } else if (endpoint == 'metrics') {
                 String poolId = request.params.get('poolId');
                 getMetricsResponse(poolId);
+            } else if (endpoint == 'scoring-config') {
+                getScoringConfigResponse();
             } else {
                 sendResponse(400, 'Invalid endpoint');
             }
@@ -216,6 +218,14 @@ global with sharing class TalentPoolRestResource {
         
         TalentPoolController.PoolMetrics metrics = TalentPoolController.getPoolMetrics(poolId);
         sendResponse(200, metrics);
+    }
+
+    /**
+     * GET /scoring-config - Get scoring weights, tiers, and score buckets
+     */
+    private static void getScoringConfigResponse() {
+        TalentPoolController.ScoringConfigurationWrapper config = TalentPoolController.getScoringConfiguration();
+        sendResponse(200, config);
     }
     
     /**

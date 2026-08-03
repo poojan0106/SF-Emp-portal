@@ -660,6 +660,74 @@ public with sharing class TalentPoolController {
         
         return metrics;
     }
+
+    @AuraEnabled(cacheable=true)
+    public static ScoringConfigurationWrapper getScoringConfiguration() {
+        ScoringConfigurationWrapper config = new ScoringConfigurationWrapper();
+
+        if (Schema.getGlobalDescribe().containsKey('Scoring_Configuration__mdt')) {
+            try {
+                List<SObject> rows = Database.query(
+                    'SELECT Skills_Weight_Total__c, Skills_Weight__c, Skills_Weight_Nice_To_Have__c, ' +
+                    'Experience_Weight__c, Location_Weight__c, Salary_Weight__c, CV_Score_Weight__c, ' +
+                    'Questionnaire_Score_Weight__c, Questionnaire_Threshold__c, Potential_Match_Min__c, ' +
+                    'Review_Required_Min__c, Poor_Match_Max__c ' +
+                    'FROM Scoring_Configuration__mdt WHERE DeveloperName = \'Default\' LIMIT 1'
+                );
+
+                if (!rows.isEmpty()) {
+                    SObject row = rows[0];
+                    config.skillsWeightTotal = decimalOrDefault(row, 'Skills_Weight_Total__c', config.skillsWeightTotal);
+                    config.skillsWeight = decimalOrDefault(row, 'Skills_Weight__c', config.skillsWeight);
+                    config.skillsNiceToHaveWeight = decimalOrDefault(row, 'Skills_Weight_Nice_To_Have__c', config.skillsNiceToHaveWeight);
+                    config.experienceWeight = decimalOrDefault(row, 'Experience_Weight__c', config.experienceWeight);
+                    config.locationWeight = decimalOrDefault(row, 'Location_Weight__c', config.locationWeight);
+                    config.salaryWeight = decimalOrDefault(row, 'Salary_Weight__c', config.salaryWeight);
+                    config.cvScoreWeight = decimalOrDefault(row, 'CV_Score_Weight__c', config.cvScoreWeight);
+                    config.questionnaireScoreWeight = decimalOrDefault(row, 'Questionnaire_Score_Weight__c', config.questionnaireScoreWeight);
+                    config.questionnaireThreshold = decimalOrDefault(row, 'Questionnaire_Threshold__c', config.questionnaireThreshold);
+                    config.potentialMatchMin = decimalOrDefault(row, 'Potential_Match_Min__c', config.potentialMatchMin);
+                    config.reviewRequiredMin = decimalOrDefault(row, 'Review_Required_Min__c', config.reviewRequiredMin);
+                    config.poorMatchMax = decimalOrDefault(row, 'Poor_Match_Max__c', config.poorMatchMax);
+                }
+            } catch (Exception e) {
+                System.debug(LoggingLevel.WARN, 'Scoring config response fallback used: ' + e.getMessage());
+            }
+        }
+
+        config.scoreBuckets = buildScoreBuckets(config);
+        config.tiers = buildTierOptions(config);
+        return config;
+    }
+
+    private static Decimal decimalOrDefault(SObject row, String fieldName, Decimal fallbackValue) {
+        Object rawValue = row.get(fieldName);
+        return rawValue == null ? fallbackValue : (Decimal) rawValue;
+    }
+
+    private static List<ScoringOptionWrapper> buildScoreBuckets(ScoringConfigurationWrapper config) {
+        Integer potentialMin = config.potentialMatchMin.intValue();
+        Integer reviewMin = config.reviewRequiredMin.intValue();
+        Integer poorMax = config.poorMatchMax.intValue();
+
+        return new List<ScoringOptionWrapper>{
+            new ScoringOptionWrapper('potential', String.valueOf(potentialMin) + '+', potentialMin, 100),
+            new ScoringOptionWrapper('review', String.valueOf(reviewMin) + '-' + String.valueOf(potentialMin - 1), reviewMin, potentialMin - 1),
+            new ScoringOptionWrapper('poor', '0-' + String.valueOf(poorMax), 0, poorMax)
+        };
+    }
+
+    private static List<ScoringOptionWrapper> buildTierOptions(ScoringConfigurationWrapper config) {
+        Integer potentialMin = config.potentialMatchMin.intValue();
+        Integer reviewMin = config.reviewRequiredMin.intValue();
+        Integer poorMax = config.poorMatchMax.intValue();
+
+        return new List<ScoringOptionWrapper>{
+            new ScoringOptionWrapper('potential match', 'Potential Match', potentialMin, 100),
+            new ScoringOptionWrapper('review required', 'Review Required', reviewMin, potentialMin - 1),
+            new ScoringOptionWrapper('poor match', 'Poor Match', 0, poorMax)
+        };
+    }
     
         
     /**
@@ -848,5 +916,36 @@ public with sharing class TalentPoolController {
         @AuraEnabled public Decimal avgExperience;
         @AuraEnabled public List<String> topSkills; 
         @AuraEnabled public List<String> jobRoles;
+    }
+
+    public class ScoringConfigurationWrapper {
+        @AuraEnabled public Decimal skillsWeightTotal = 40;
+        @AuraEnabled public Decimal skillsWeight = 30;
+        @AuraEnabled public Decimal skillsNiceToHaveWeight = 10;
+        @AuraEnabled public Decimal experienceWeight = 30;
+        @AuraEnabled public Decimal locationWeight = 15;
+        @AuraEnabled public Decimal salaryWeight = 15;
+        @AuraEnabled public Decimal cvScoreWeight = 40;
+        @AuraEnabled public Decimal questionnaireScoreWeight = 60;
+        @AuraEnabled public Decimal questionnaireThreshold = 70;
+        @AuraEnabled public Decimal potentialMatchMin = 70;
+        @AuraEnabled public Decimal reviewRequiredMin = 40;
+        @AuraEnabled public Decimal poorMatchMax = 39;
+        @AuraEnabled public List<ScoringOptionWrapper> scoreBuckets;
+        @AuraEnabled public List<ScoringOptionWrapper> tiers;
+    }
+
+    public class ScoringOptionWrapper {
+        @AuraEnabled public String value;
+        @AuraEnabled public String label;
+        @AuraEnabled public Integer min;
+        @AuraEnabled public Integer max;
+
+        public ScoringOptionWrapper(String value, String label, Integer min, Integer max) {
+            this.value = value;
+            this.label = label;
+            this.min = min;
+            this.max = max;
+        }
     }
 }

@@ -1,16 +1,27 @@
 public class AICVEnhancementService {
     private static final String ONBOARDING_TEMPLATE = 'Blakeney_Onboarding_Invitation_Static';
     private static final String ONBOARDING_CLICK_BASE_URL = System.Label.Blakeney_Onboarding_Click_Base_URL;
+    private static Boolean lastClaudeEnhancementSucceeded = true;
 
     public static void enhanceContact(Id contactId) {
-        if (contactId == null) return;
+        enhanceContactInternal(contactId, true);
+    }
 
+    public static Boolean enhanceContactFromRetry(Id contactId) {
+        return enhanceContactInternal(contactId, false);
+    }
+
+    private static Boolean enhanceContactInternal(Id contactId, Boolean enqueueRetryOnClaudeFailure) {
+        if (contactId == null) return false;
+
+        Long started = DateTime.now().getTime();
+        lastClaudeEnhancementSucceeded = true;
         Contact con = fetchContact(contactId);
-        if (con == null) return;
+        if (con == null) return false;
 
         String originalSkills = value(con, 'R_ATS__Skills__c');
         String cvText = value(con, 'R_ATS__Text_CV__c');
-        Map<String, Object> aiData = enhanceWithClaude(con, originalSkills, cvText);
+        Map<String, Object> aiData = enhanceWithClaude(con, originalSkills, cvText, enqueueRetryOnClaudeFailure);
         String aiSkills = stringValue(aiData.get('skills'));
         String normalizedSkills = normalizeSkills(String.isNotBlank(aiSkills) ? aiSkills : originalSkills);
         String summary = stringValue(aiData.get('summary'));
@@ -38,6 +49,15 @@ public class AICVEnhancementService {
         }
         sendOnboardingInvitation(con.Id, con.Email, summary, normalizedSkills);
         publishEnhancementEvent(con.Id, String.isNotBlank(summary), String.isNotBlank(normalizedSkills));
+        AIAPILogService.logSuccess(
+            'CV Enhancement',
+            con.Id,
+            null,
+            'Contact=' + con.Id,
+            'Skills=' + normalizedSkills + '\nSummaryGenerated=' + String.isNotBlank(summary),
+            Integer.valueOf(String.valueOf(DateTime.now().getTime() - started))
+        );
+        return lastClaudeEnhancementSucceeded;
     }
 
     public static void sendCandidateRegistrationInvitation(Id contactId, String email, String firstName) {
@@ -111,7 +131,7 @@ public class AICVEnhancementService {
         }
     }
 
-    private static Map<String, Object> enhanceWithClaude(Contact con, String skills, String cvText) {
+    private static Map<String, Object> enhanceWithClaude(Contact con, String skills, String cvText, Boolean enqueueRetryOnFailure) {
         if (String.isBlank(cvText) && String.isBlank(skills)) return new Map<String, Object>();
         if (Test.isRunningTest()) return new Map<String, Object>();
         String prompt =
@@ -119,16 +139,49 @@ public class AICVEnhancementService {
             'skills (comma-separated canonical skills), summary (3-4 professional paragraphs), ' +
             'flags (newline-separated risks: employment gaps over 6 months, frequent job changes, qualification mismatches, or \"No major risk flags detected\"), ' +
             'marketabilityScore (0-100). Use Australian recruitment terminology. No markdown.';
-        try {
-            return ClaudeAPIService.extractStructuredData(
-                'Name: ' + con.FirstName + ' ' + con.LastName +
+        String sourcePayload =
+            'Name: ' + con.FirstName + ' ' + con.LastName +
                 '\nTitle: ' + con.Title +
                 '\nParsed skills: ' + skills +
-                '\nCV Text:\n' + cvText,
+                '\nCV Text:\n' + cvText;
+        Long started = DateTime.now().getTime();
+        try {
+            Map<String, Object> result = ClaudeAPIService.extractStructuredData(
+                sourcePayload,
                 prompt
             );
+            lastClaudeEnhancementSucceeded = !result.isEmpty();
+            if (result.isEmpty()) {
+                String error = 'Claude returned no structured enhancement data.';
+                AIAPILogService.logFailure(
+                    'CV Enhancement',
+                    con.Id,
+                    null,
+                    sourcePayload,
+                    error,
+                    Integer.valueOf(String.valueOf(DateTime.now().getTime() - started))
+                );
+                // Retry disabled per current requirement. Re-enable to queue Claude fallback failures.
+                // if (enqueueRetryOnFailure) {
+                //     AIRetryService.enqueue(con.Id, null, 'CV Enhancement', sourcePayload, error);
+                // }
+            }
+            return result;
         } catch (Exception e) {
+            lastClaudeEnhancementSucceeded = false;
             System.debug(LoggingLevel.WARN, 'Claude enhancement failed; static fallback used: ' + e.getMessage());
+            AIAPILogService.logFailure(
+                'CV Enhancement',
+                con.Id,
+                null,
+                sourcePayload,
+                e.getMessage(),
+                Integer.valueOf(String.valueOf(DateTime.now().getTime() - started))
+            );
+            // Retry disabled per current requirement. Re-enable to queue Claude exceptions.
+            // if (enqueueRetryOnFailure) {
+            //     AIRetryService.enqueue(con.Id, null, 'CV Enhancement', sourcePayload, e.getMessage());
+            // }
             return new Map<String, Object>();
         }
     }

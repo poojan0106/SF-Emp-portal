@@ -46,7 +46,7 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
             }
         }
 
-        Map<String, Object> parsedData = parser.parseResumeWithClaude(pdfBase64, mediaType);
+        Map<String, Object> parsedData = parser.parseResumeWithClaude(pdfBase64, mediaType, contactId);
         if (parsedData == null) {
             result.success = false;
             result.message = String.isBlank(parser.lastParseError)
@@ -150,7 +150,7 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
             
             // Parse resume with Claude
             System.debug('Sending to Claude for parsing...');
-            Map<String, Object> parsedData = parseResumeWithClaude(pdfBase64, mediaType);
+            Map<String, Object> parsedData = parseResumeWithClaude(pdfBase64, mediaType, null);
             Id contactId;
             if (parsedData != null) {
                 System.debug('Resume parsed successfully - creating Contact');
@@ -438,7 +438,7 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
     /**
      * @description Parse resume using Claude API
      */
-    private Map<String, Object> parseResumeWithClaude(String pdfBase64, String mediaType) {
+    private Map<String, Object> parseResumeWithClaude(String pdfBase64, String mediaType, Id contactId) {
         HttpRequest req = new HttpRequest();
         req.setEndpoint(CLAUDE_ENDPOINT);
         req.setMethod('POST');
@@ -480,7 +480,15 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
         
         req.setBody(JSON.serialize(body));
         
-        HttpResponse res = new Http().send(req);
+        Long started = DateTime.now().getTime();
+        HttpResponse res;
+        try {
+            res = new Http().send(req);
+        } catch (Exception calloutException) {
+            logResumeClaudeFailure(contactId, mediaType, pdfBase64 == null ? 0 : pdfBase64.length(), calloutException.getMessage(), started);
+            throw calloutException;
+        }
+        logResumeClaudeCall(contactId, mediaType, pdfBase64 == null ? 0 : pdfBase64.length(), res, started);
         System.debug('Claude API Status: ' + res.getStatusCode());
         
         if (res.getStatusCode() != 200) {
@@ -545,6 +553,68 @@ global class resumeParserEmailService implements Messaging.InboundEmailHandler {
         } catch (Exception parseException) {
             lastParseError = 'Claude returned invalid JSON: ' + parseException.getMessage();
             System.debug('Claude JSON parse error: ' + parseException.getMessage());
+            return null;
+        }
+    }
+
+    private static void logResumeClaudeCall(Id contactId, String mediaType, Integer payloadChars, HttpResponse res, Long started) {
+        try {
+            AIAPILogService.LogEntry entry = new AIAPILogService.LogEntry();
+            entry.operation = 'CV Parse';
+            entry.requestType = 'CV_Parse';
+            entry.contactId = contactId;
+            entry.requestPayload = 'model=' + CLAUDE_MODEL +
+                '\nmediaType=' + mediaType +
+                '\npayloadChars=' + String.valueOf(payloadChars) +
+                '\nsource=resumeParserEmailService';
+            entry.responsePayload = res == null ? null : res.getBody();
+            entry.status = res != null && res.getStatusCode() >= 200 && res.getStatusCode() < 300 ? 'Success' : 'Failed';
+            entry.errorMessage = entry.status == 'Failed' && res != null
+                ? 'Claude API HTTP ' + res.getStatusCode()
+                : null;
+            entry.model = CLAUDE_MODEL;
+            entry.durationMs = Integer.valueOf(String.valueOf(DateTime.now().getTime() - started));
+            entry.httpStatusCode = res == null ? null : res.getStatusCode();
+            if (res != null && String.isNotBlank(res.getBody()) && res.getStatusCode() == 200) {
+                Map<String, Object> responseBody = (Map<String, Object>) JSON.deserializeUntyped(res.getBody());
+                Map<String, Object> usage = (Map<String, Object>) responseBody.get('usage');
+                if (usage != null) {
+                    entry.inputTokens = integerValue(usage.get('input_tokens'));
+                    entry.outputTokens = integerValue(usage.get('output_tokens'));
+                    entry.totalTokens = (entry.inputTokens == null ? 0 : entry.inputTokens) + (entry.outputTokens == null ? 0 : entry.outputTokens);
+                }
+            }
+            AIAPILogService.logClaudeCall(entry);
+        } catch (Exception e) {
+            System.debug(LoggingLevel.WARN, 'Resume Claude API log skipped: ' + e.getMessage());
+        }
+    }
+
+    private static void logResumeClaudeFailure(Id contactId, String mediaType, Integer payloadChars, String errorMessage, Long started) {
+        try {
+            AIAPILogService.LogEntry entry = new AIAPILogService.LogEntry();
+            entry.operation = 'CV Parse';
+            entry.requestType = 'CV_Parse';
+            entry.contactId = contactId;
+            entry.requestPayload = 'model=' + CLAUDE_MODEL +
+                '\nmediaType=' + mediaType +
+                '\npayloadChars=' + String.valueOf(payloadChars) +
+                '\nsource=resumeParserEmailService';
+            entry.status = 'Failed';
+            entry.errorMessage = errorMessage;
+            entry.model = CLAUDE_MODEL;
+            entry.durationMs = Integer.valueOf(String.valueOf(DateTime.now().getTime() - started));
+            AIAPILogService.logClaudeCall(entry);
+        } catch (Exception e) {
+            System.debug(LoggingLevel.WARN, 'Resume Claude failure log skipped: ' + e.getMessage());
+        }
+    }
+
+    private static Integer integerValue(Object value) {
+        if (value == null) return null;
+        try {
+            return Integer.valueOf(String.valueOf(value));
+        } catch (Exception e) {
             return null;
         }
     }
