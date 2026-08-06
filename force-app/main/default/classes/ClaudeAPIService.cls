@@ -6,7 +6,7 @@ public with sharing class ClaudeAPIService {
     
     private static final String API_ENDPOINT = 'https://api.anthropic.com/v1/messages';
     private static final String API_VERSION = '2023-06-01';
-    private static final String DEFAULT_MODEL = 'claude-sonnet-4-20250514';
+    private static final String DEFAULT_MODEL = 'claude-opus-4-6';
 
     /**
      * Generic Claude chat API used by FlintChatController.
@@ -630,7 +630,7 @@ public with sharing class ClaudeAPIService {
     
     public class ClaudeResponse {
         public String content;
-        public String model = 'claude-sonnet-4-20250514';
+        public String model = 'claude-opus-4-6';
         public Integer inputTokens;
         public Integer outputTokens;
         public Integer totalTokens;

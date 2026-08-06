@@ -1,17 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<CustomMetadata xmlns="http://soap.sforce.com/2006/04/metadata">
+<CustomMetadata xmlns="http://soap.sforce.com/2006/04/metadata" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
     <label>JS</label>
     <protected>false</protected>
     <values>
-        <field>Original_Term__c</field>
-        <value xsi:type="xsd:string" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">JS</value>
-    </values>
-    <values>
         <field>Canonical_Term__c</field>
-        <value xsi:type="xsd:string" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">JavaScript</value>
+        <value xsi:type="xsd:string">JavaScript</value>
     </values>
     <values>
         <field>Category__c</field>
-        <value xsi:type="xsd:string" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">Programming</value>
+        <value xsi:type="xsd:string">Programming</value>
+    </values>
+    <values>
+        <field>Original_Term__c</field>
+        <value xsi:type="xsd:string">JS</value>
     </values>
 </CustomMetadata>

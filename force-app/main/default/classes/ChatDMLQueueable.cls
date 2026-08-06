@@ -146,6 +146,17 @@ public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
                 upsert mappedIntent;
                 syncContactSalary(contactId, mappedIntent.Min_Salary_Expactation__c, mappedIntent.Max_Salary_Expactation__c);
                 syncContactSkills(contactId, mappedIntent.Skills__c);
+                if (Integer.valueOf(answeredQuestionCount) <= 4) {
+                    CareerPathwaySyncService.syncForIntent(mappedIntent.Id);
+                }
+                BlakeneyInteractionEventService.publish(
+                    parseId(contactId),
+                    Integer.valueOf(answeredQuestionCount) <= 4 ? 'Goal Update' : 'Profile Update',
+                    'Career_Intent__c question ' + answeredQuestionCount,
+                    mappedIntent.Id,
+                    null,
+                    sessionId
+                );
                 System.debug('Updated Career Intent by questionCount ' + answeredQuestionCount + ' for session: ' + sessionId);
             }
             return;
@@ -283,6 +294,17 @@ public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
             upsert intent;
             syncContactSalary(contactId, intent.Min_Salary_Expactation__c, intent.Max_Salary_Expactation__c);
             syncContactSkills(contactId, intent.Skills__c);
+            if (hasMediumTermSignal(aiMsg) || hasLongTermSignal(aiMsg) || hasAspirationalSignal(aiMsg) || hasRelocatingSignal(aiMsg)) {
+                CareerPathwaySyncService.syncForIntent(intent.Id);
+            }
+            BlakeneyInteractionEventService.publish(
+                parseId(contactId),
+                hasCompletionSignal(aiMsg) ? 'Onboarding' : 'Profile Update',
+                'Career_Intent__c conversation update',
+                intent.Id,
+                null,
+                sessionId
+            );
             System.debug('âœ… Updated Career Intent for session: ' + sessionId);
         }
     }
@@ -685,6 +707,15 @@ public class ChatDMLQueueable implements Queueable, Database.AllowsCallouts {
             update new Contact(Id = contacts[0].Id, R_ATS__Skills__c = skillsText);
         } catch (Exception e) {
             System.debug(LoggingLevel.WARN, 'Failed to sync Contact skills from Career Intent: ' + e.getMessage());
+        }
+    }
+
+    private Id parseId(String value) {
+        if (String.isBlank(value)) return null;
+        try {
+            return (Id) value;
+        } catch (Exception e) {
+            return null;
         }
     }
 

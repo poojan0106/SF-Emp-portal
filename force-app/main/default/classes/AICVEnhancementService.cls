@@ -11,6 +11,85 @@ public class AICVEnhancementService {
         return enhanceContactInternal(contactId, false);
     }
 
+    public static Boolean enhanceContactWithBlakeneyContext(Id contactId, Id careerIntentId, Id careerConstraintsId, String interactionType, String updatedFields, String sessionId) {
+        if (contactId == null) return false;
+
+        Long started = DateTime.now().getTime();
+        lastClaudeEnhancementSucceeded = true;
+        Contact con = fetchContact(contactId);
+        if (con == null) return false;
+
+        SObject intent = fetchCareerIntent(contactId, careerIntentId);
+        SObject constraints = fetchCareerConstraints(contactId, careerConstraintsId);
+        String chatHistory = fetchConversationHistory(contactId, sessionId);
+        String originalSkills = value(con, 'R_ATS__Skills__c');
+        String cvText = value(con, 'R_ATS__Text_CV__c');
+        String sourcePayload = buildBlakeneyContextPayload(con, intent, constraints, chatHistory, updatedFields);
+        if (isBlakeneyCacheHit(con.Id, sourcePayload)) {
+            Contact cacheUpdate = new Contact(Id = con.Id);
+            putFirstExisting(cacheUpdate, Contact.SObjectType, new List<String>{ 'R_ATS__AI_Last_Enriched__c', 'AI_Last_Enriched__c' }, System.now());
+            update cacheUpdate;
+            try {
+                CandidateCVScoringService.scoreCampaignMembersForContact(con.Id);
+            } catch (Exception e) {
+                enqueueScoringRetriesForContact(con.Id, 'Cache-hit scoring after ' + interactionType, e.getMessage());
+            }
+            AIAPILogService.logSuccess(
+                'Blakeney Interaction Enrichment',
+                con.Id,
+                null,
+                sourcePayload,
+                'CacheHit=true\nInteraction=' + interactionType + '\nReason=80%+ unchanged from last successful enrichment.',
+                Integer.valueOf(String.valueOf(DateTime.now().getTime() - started))
+            );
+            return true;
+        }
+        Map<String, Object> aiData = enhanceWithClaudeContext(con, sourcePayload, true);
+
+        String aiSkills = stringValue(aiData.get('skills'));
+        String normalizedSkills = normalizeSkills(String.isNotBlank(aiSkills) ? aiSkills : originalSkills);
+        String summary = stringValue(aiData.get('summary'));
+        if (String.isBlank(summary)) summary = buildSummary(con, normalizedSkills, cvText);
+        String flags = stringValue(aiData.get('flags'));
+        if (String.isBlank(flags)) flags = buildFlags(cvText);
+        String pathwayAssessment = stringValue(aiData.get('careerPathwayAssessment'));
+        if (String.isBlank(pathwayAssessment)) pathwayAssessment = buildPathwayAssessment(intent, constraints);
+        Decimal marketabilityScore = decimalFromObject(aiData.get('marketabilityScore'));
+        if (marketabilityScore == null) {
+            marketabilityScore = calculateMarketabilityScore(con, normalizedSkills, summary, flags);
+        }
+        Decimal previousMarketability = decimalValue(con, 'Marketability_Score__c');
+        if (previousMarketability != null && marketabilityScore != null && previousMarketability - marketabilityScore >= 20) {
+            flags = appendLine(flags, 'AI confidence dropped: manual review recommended.');
+        }
+
+        Contact updateContact = new Contact(Id = con.Id);
+        putIfFieldExists(updateContact, Contact.SObjectType, 'R_ATS__Skills__c', normalizedSkills);
+        putFirstExisting(updateContact, Contact.SObjectType, new List<String>{ 'R_ATS__Candidate_Summary__c', 'Candidate_Summary__c' }, summary);
+        putFirstExisting(updateContact, Contact.SObjectType, new List<String>{ 'R_ATS__Candidate_Flags__c', 'Candidate_Flags__c' }, flags);
+        putIfFieldExists(updateContact, Contact.SObjectType, 'Marketability_Score__c', marketabilityScore);
+        putFirstExisting(updateContact, Contact.SObjectType, new List<String>{ 'R_ATS__AI_Last_Enriched__c', 'AI_Last_Enriched__c' }, System.now());
+        putFirstExisting(updateContact, Contact.SObjectType, new List<String>{ 'R_ATS__Career_Pathway_Assessment__c', 'Career_Pathway_Assessment__c' }, pathwayAssessment);
+        update updateContact;
+        syncCareerIntentSkills(con.Id, normalizedSkills);
+
+        try {
+            CandidateCVScoringService.scoreCampaignMembersForContact(con.Id);
+        } catch (Exception e) {
+            enqueueScoringRetriesForContact(con.Id, 'Blakeney interaction scoring after ' + interactionType, e.getMessage());
+        }
+
+        AIAPILogService.logSuccess(
+            'Blakeney Interaction Enrichment',
+            con.Id,
+            null,
+            sourcePayload,
+            'Interaction=' + interactionType + '\nSummaryGenerated=' + String.isNotBlank(summary) + '\nPathwayAssessment=' + firstLine(pathwayAssessment),
+            Integer.valueOf(String.valueOf(DateTime.now().getTime() - started))
+        );
+        return lastClaudeEnhancementSucceeded;
+    }
+
     private static Boolean enhanceContactInternal(Id contactId, Boolean enqueueRetryOnClaudeFailure) {
         if (contactId == null) return false;
 
@@ -39,6 +118,7 @@ public class AICVEnhancementService {
         putFirstExisting(updateContact, Contact.SObjectType, new List<String>{ 'R_ATS__Candidate_Summary__c', 'Candidate_Summary__c' }, summary);
         putFirstExisting(updateContact, Contact.SObjectType, new List<String>{ 'R_ATS__Candidate_Flags__c', 'Candidate_Flags__c' }, flags);
         putIfFieldExists(updateContact, Contact.SObjectType, 'Marketability_Score__c', marketabilityScore);
+        putFirstExisting(updateContact, Contact.SObjectType, new List<String>{ 'R_ATS__AI_Last_Enriched__c', 'AI_Last_Enriched__c' }, System.now());
         update updateContact;
         syncCareerIntentSkills(con.Id, normalizedSkills);
 
@@ -161,10 +241,9 @@ public class AICVEnhancementService {
                     error,
                     Integer.valueOf(String.valueOf(DateTime.now().getTime() - started))
                 );
-                // Retry disabled per current requirement. Re-enable to queue Claude fallback failures.
-                // if (enqueueRetryOnFailure) {
-                //     AIRetryService.enqueue(con.Id, null, 'CV Enhancement', sourcePayload, error);
-                // }
+                if (enqueueRetryOnFailure) {
+                    AIRetryService.enqueue(con.Id, null, 'CV Enhancement', sourcePayload, error);
+                }
             }
             return result;
         } catch (Exception e) {
@@ -178,10 +257,36 @@ public class AICVEnhancementService {
                 e.getMessage(),
                 Integer.valueOf(String.valueOf(DateTime.now().getTime() - started))
             );
-            // Retry disabled per current requirement. Re-enable to queue Claude exceptions.
-            // if (enqueueRetryOnFailure) {
-            //     AIRetryService.enqueue(con.Id, null, 'CV Enhancement', sourcePayload, e.getMessage());
-            // }
+            if (enqueueRetryOnFailure) {
+                AIRetryService.enqueue(con.Id, null, 'CV Enhancement', sourcePayload, e.getMessage());
+            }
+            return new Map<String, Object>();
+        }
+    }
+
+    private static Map<String, Object> enhanceWithClaudeContext(Contact con, String sourcePayload, Boolean enqueueRetryOnFailure) {
+        if (String.isBlank(sourcePayload)) return new Map<String, Object>();
+        if (Test.isRunningTest()) return new Map<String, Object>();
+        String prompt =
+            'Analyze this candidate after Blakeney career interaction. Return ONLY valid JSON with keys: ' +
+            'skills (comma-separated canonical skills), summary (2-3 professional paragraphs), ' +
+            'flags (newline-separated risks), marketabilityScore (0-100), ' +
+            'careerPathwayAssessment (short feasibility assessment using goals and constraints), ' +
+            'jobFitNotes (short notes for matching open opportunities). Ignore protected attributes: name, gender, age, photo, university prestige, full address. No markdown.';
+        Long started = DateTime.now().getTime();
+        try {
+            Map<String, Object> result = ClaudeAPIService.extractStructuredData(sourcePayload, prompt);
+            lastClaudeEnhancementSucceeded = !result.isEmpty();
+            if (result.isEmpty()) {
+                String error = 'Claude returned no Blakeney enrichment data.';
+                AIAPILogService.logFailure('Blakeney Interaction Enrichment', con.Id, null, sourcePayload, error, Integer.valueOf(String.valueOf(DateTime.now().getTime() - started)));
+                if (enqueueRetryOnFailure) AIRetryService.enqueue(con.Id, null, 'Blakeney Interaction Enrichment', sourcePayload, error);
+            }
+            return result;
+        } catch (Exception e) {
+            lastClaudeEnhancementSucceeded = false;
+            AIAPILogService.logFailure('Blakeney Interaction Enrichment', con.Id, null, sourcePayload, e.getMessage(), Integer.valueOf(String.valueOf(DateTime.now().getTime() - started)));
+            if (enqueueRetryOnFailure) AIRetryService.enqueue(con.Id, null, 'Blakeney Interaction Enrichment', sourcePayload, e.getMessage());
             return new Map<String, Object>();
         }
     }
@@ -196,11 +301,190 @@ public class AICVEnhancementService {
         addIfFieldExists(fields, Contact.SObjectType, 'Years_Experience__c');
         addIfFieldExists(fields, Contact.SObjectType, 'R_ATS__Minimum_Salary__c');
         addIfFieldExists(fields, Contact.SObjectType, 'R_ATS__Maximum_Salary__c');
+        addIfFieldExists(fields, Contact.SObjectType, 'R_ATS__Candidate_Summary__c');
+        addIfFieldExists(fields, Contact.SObjectType, 'Candidate_Summary__c');
+        addIfFieldExists(fields, Contact.SObjectType, 'R_ATS__Candidate_Flags__c');
+        addIfFieldExists(fields, Contact.SObjectType, 'Candidate_Flags__c');
+        addIfFieldExists(fields, Contact.SObjectType, 'Marketability_Score__c');
 
         String soql = 'SELECT ' + String.join(new List<String>(fields), ',') +
             ' FROM Contact WHERE Id = :contactId LIMIT 1';
         List<Contact> rows = Database.query(soql);
         return rows.isEmpty() ? null : rows[0];
+    }
+
+    private static void enqueueScoringRetriesForContact(Id contactId, String payload, String errorMessage) {
+        if (contactId == null) return;
+        try {
+            List<CampaignMember> members = [
+                SELECT Id
+                FROM CampaignMember
+                WHERE ContactId = :contactId
+                ORDER BY CreatedDate DESC
+                LIMIT 200
+            ];
+            if (members.isEmpty()) {
+                AIRetryService.enqueue(contactId, null, 'CV Scoring', payload, errorMessage);
+                return;
+            }
+            for (CampaignMember member : members) {
+                AIRetryService.enqueue(contactId, member.Id, 'CV Scoring', payload, errorMessage);
+            }
+        } catch (Exception retryError) {
+            AIRetryService.enqueue(contactId, null, 'CV Scoring', payload, errorMessage + '\nRetry member lookup failed: ' + retryError.getMessage());
+        }
+    }
+
+    private static SObject fetchCareerIntent(Id contactId, Id careerIntentId) {
+        if (!Schema.getGlobalDescribe().containsKey('Career_Intent__c')) return null;
+        List<String> fields = existingFields('Career_Intent__c', new List<String>{
+            'Id', 'Short_Term_Goal__c', 'Medium_Term_Goal__c', 'Long_Term_Goal__c', 'Aspirational_Goal__c',
+            'Skills__c', 'Industry_Preferences__c', 'Willing_to_Relocate__c', 'Short_Term_Remote__c',
+            'Min_Salary_Expactation__c', 'Max_Salary_Expactation__c', 'Short_Term_Company_Size__c'
+        });
+        String whereClause = careerIntentId != null
+            ? ' WHERE Id = :careerIntentId'
+            : ' WHERE Contact__c = :contactId OR Candidate__c = :contactId ORDER BY LastModifiedDate DESC LIMIT 1';
+        List<SObject> rows = Database.query('SELECT ' + String.join(fields, ',') + ' FROM Career_Intent__c' + whereClause);
+        return rows.isEmpty() ? null : rows[0];
+    }
+
+    private static SObject fetchCareerConstraints(Id contactId, Id careerConstraintsId) {
+        if (!Schema.getGlobalDescribe().containsKey('Career_Constraints__c')) return null;
+        List<String> fields = existingFields('Career_Constraints__c', new List<String>{
+            'Id', 'Preferred_Locations__c', 'Willing_to_Relocate__c', 'Remote_Work_Requirement__c',
+            'Min_Salary__c', 'Max_Salary__c', 'Company_Size_Preference__c', 'Industry_Preferences__c',
+            'Industry_Exclusions__c', 'Culture_Preferences__c', 'Deal_Breakers__c'
+        });
+        String whereClause = careerConstraintsId != null
+            ? ' WHERE Id = :careerConstraintsId'
+            : ' WHERE Contact__c = :contactId ORDER BY LastModifiedDate DESC LIMIT 1';
+        List<SObject> rows = Database.query('SELECT ' + String.join(fields, ',') + ' FROM Career_Constraints__c' + whereClause);
+        return rows.isEmpty() ? null : rows[0];
+    }
+
+    private static String fetchConversationHistory(Id contactId, String sessionId) {
+        if (!Schema.getGlobalDescribe().containsKey('Chat_Interaction__c')) return null;
+        try {
+            List<String> fields = existingFields('Chat_Interaction__c', new List<String>{ 'Id', 'User_Message__c', 'AI_Response__c', 'Session_ID__c', 'CreatedDate' });
+            if (fields.size() <= 1) return null;
+            String whereClause = String.isNotBlank(sessionId)
+                ? ' WHERE Contact__c = :contactId AND Session_ID__c = :sessionId'
+                : ' WHERE Contact__c = :contactId';
+            List<SObject> rows = Database.query('SELECT ' + String.join(fields, ',') + ' FROM Chat_Interaction__c' + whereClause + ' ORDER BY CreatedDate DESC LIMIT 12');
+            List<String> lines = new List<String>();
+            for (SObject row : rows) {
+                lines.add('User: ' + value(row, 'User_Message__c') + '\nBlakeney: ' + value(row, 'AI_Response__c'));
+            }
+            return String.join(lines, '\n---\n');
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static String buildBlakeneyContextPayload(Contact con, SObject intent, SObject constraints, String chatHistory, String updatedFields) {
+        return 'Updated fields: ' + updatedFields +
+            '\nContact Title: ' + con.Title +
+            '\nContact Skills: ' + value(con, 'R_ATS__Skills__c') +
+            '\nContact Summary: ' + firstNonBlank(value(con, 'R_ATS__Candidate_Summary__c'), value(con, 'Candidate_Summary__c')) +
+            '\nContact Flags: ' + firstNonBlank(value(con, 'R_ATS__Candidate_Flags__c'), value(con, 'Candidate_Flags__c')) +
+            '\nYears Experience: ' + String.valueOf(decimalValue(con, 'Years_Experience__c')) +
+            '\nLocation: ' + con.MailingCity + ', ' + con.MailingState + ', ' + con.MailingCountry +
+            '\nSalary: ' + String.valueOf(decimalValue(con, 'R_ATS__Minimum_Salary__c')) + ' - ' + String.valueOf(decimalValue(con, 'R_ATS__Maximum_Salary__c')) +
+            '\nCV Text:\n' + value(con, 'R_ATS__Text_CV__c') +
+            '\nCareer Intent:\n' + describeSObject(intent) +
+            '\nCareer Constraints:\n' + describeSObject(constraints) +
+            '\nRecent Conversation:\n' + chatHistory;
+    }
+
+    public static void flagContactForManualReview(Id contactId, String reason) {
+        if (contactId == null) return;
+        Contact con = fetchContact(contactId);
+        if (con == null) return;
+
+        String existingFlags = firstNonBlank(value(con, 'R_ATS__Candidate_Flags__c'), value(con, 'Candidate_Flags__c'));
+        String manualFlag = 'Manual review recommended: ' + (String.isBlank(reason) ? 'AI enrichment retry failed.' : reason);
+        Contact updateContact = new Contact(Id = con.Id);
+        putFirstExisting(updateContact, Contact.SObjectType, new List<String>{ 'R_ATS__Candidate_Flags__c', 'Candidate_Flags__c' }, appendLine(existingFlags, manualFlag));
+        update updateContact;
+    }
+
+    private static Boolean isBlakeneyCacheHit(Id contactId, String sourcePayload) {
+        if (contactId == null || String.isBlank(sourcePayload) || !Schema.getGlobalDescribe().containsKey('AI_API_Log__c')) return false;
+        try {
+            List<SObject> rows = Database.query(
+                'SELECT Request_Payload__c FROM AI_API_Log__c ' +
+                'WHERE Related_Contact__c = :contactId ' +
+                'AND Operation__c = \'Blakeney Interaction Enrichment\' ' +
+                'AND Status__c = \'Success\' ' +
+                'ORDER BY CreatedDate DESC LIMIT 1'
+            );
+            if (rows.isEmpty()) return false;
+            String previousPayload = value(rows[0], 'Request_Payload__c');
+            if (String.isBlank(previousPayload)) return false;
+            if (payloadHash(previousPayload) == payloadHash(sourcePayload)) return true;
+            return similarityRatio(previousPayload, sourcePayload) >= 0.80;
+        } catch (Exception e) {
+            System.debug(LoggingLevel.WARN, 'Blakeney enrichment cache check skipped: ' + e.getMessage());
+            return false;
+        }
+    }
+
+    private static String payloadHash(String text) {
+        return EncodingUtil.convertToHex(Crypto.generateDigest('SHA-256', Blob.valueOf(String.isBlank(text) ? '' : text)));
+    }
+
+    private static Decimal similarityRatio(String oldText, String newText) {
+        Set<String> oldTokens = tokenSet(oldText);
+        Set<String> newTokens = tokenSet(newText);
+        if (oldTokens.isEmpty() || newTokens.isEmpty()) return 0;
+        Integer matches = 0;
+        for (String token : newTokens) {
+            if (oldTokens.contains(token)) matches++;
+        }
+        Integer denominator = Math.max(oldTokens.size(), newTokens.size());
+        return Decimal.valueOf(matches) / Decimal.valueOf(denominator);
+    }
+
+    private static Set<String> tokenSet(String text) {
+        Set<String> tokens = new Set<String>();
+        if (String.isBlank(text)) return tokens;
+        String cleaned = text.toLowerCase().replaceAll('[^a-z0-9]+', ' ');
+        for (String token : cleaned.split('\\s+')) {
+            if (String.isNotBlank(token) && token.length() > 2) tokens.add(token);
+        }
+        return tokens;
+    }
+
+    private static String buildPathwayAssessment(SObject intent, SObject constraints) {
+        if (intent == null) return 'Career pathway assessment pending until Blakeney goals are available.';
+        return 'Career pathway can be assessed from saved goals: ' +
+            firstNonBlank(value(intent, 'Short_Term_Goal__c'), '') + ' | ' +
+            firstNonBlank(value(intent, 'Medium_Term_Goal__c'), '') + ' | ' +
+            firstNonBlank(value(intent, 'Long_Term_Goal__c'), '') + ' | ' +
+            firstNonBlank(value(intent, 'Aspirational_Goal__c'), '') +
+            '. Constraints considered: ' + describeSObject(constraints);
+    }
+
+    private static String describeSObject(SObject row) {
+        if (row == null) return 'Not available';
+        List<String> parts = new List<String>();
+        Map<String, Object> values = row.getPopulatedFieldsAsMap();
+        for (String key : values.keySet()) {
+            if (key == 'Id') continue;
+            parts.add(key + ': ' + String.valueOf(values.get(key)));
+        }
+        return parts.isEmpty() ? 'No populated fields' : String.join(parts, '\n');
+    }
+
+    private static List<String> existingFields(String objectName, List<String> requested) {
+        Map<String, Schema.SObjectField> fields = Schema.getGlobalDescribe().get(objectName).getDescribe().fields.getMap();
+        List<String> found = new List<String>();
+        for (String fieldName : requested) {
+            if (fields.containsKey(fieldName)) found.add(fieldName);
+        }
+        if (!found.contains('Id')) found.add('Id');
+        return found;
     }
 
     private static Map<String, String> loadSkillMapping() {
@@ -485,6 +769,17 @@ public class AICVEnhancementService {
 
     private static String blankToNull(String value) {
         return String.isBlank(value) ? null : value;
+    }
+
+    private static String firstNonBlank(String first, String second) {
+        return String.isNotBlank(first) ? first : second;
+    }
+
+    private static String appendLine(String existing, String line) {
+        if (String.isBlank(line)) return existing;
+        if (String.isBlank(existing)) return line;
+        if (existing.contains(line)) return existing;
+        return existing + '\n' + line;
     }
 
     private static Integer countOccurrences(String haystack, String needle) {

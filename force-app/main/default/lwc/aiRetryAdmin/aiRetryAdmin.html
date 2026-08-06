@@ -1,0 +1,18 @@
+<template>
+    <lightning-card title="AI Retry Admin">
+        <div class="slds-p-around_medium">
+            <div class="slds-m-bottom_small">
+                <lightning-button label="Refresh" onclick={loadRows}></lightning-button>
+                <lightning-button class="slds-m-left_x-small" variant="brand" label="Retry Selected" onclick={retrySelected} disabled={noSelection}></lightning-button>
+                <lightning-button class="slds-m-left_x-small" label="Retry All Due" onclick={retryAll}></lightning-button>
+            </div>
+            <lightning-datatable
+                key-field="id"
+                data={rows}
+                columns={columns}
+                selected-rows={selectedRows}
+                onrowselection={handleSelection}>
+            </lightning-datatable>
+        </div>
+    </lightning-card>
+</template>

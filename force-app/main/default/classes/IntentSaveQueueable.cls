@@ -117,6 +117,15 @@ public class IntentSaveQueueable implements Queueable {
             }
 
             syncContactSalary(contactId, intent.Min_Salary_Expactation__c, intent.Max_Salary_Expactation__c);
+            CareerPathwaySyncService.syncForIntent(intent.Id);
+            BlakeneyInteractionEventService.publish(
+                parseId(contactId),
+                isNew ? 'Onboarding' : 'Goal Update',
+                'Career_Intent__c goals/preferences/skills/salary',
+                intent.Id,
+                null,
+                sessionId
+            );
 
             System.debug((isNew ? 'Created' : 'Updated') + ' Career Intent record: ' + intent.Id);
 
@@ -228,6 +237,15 @@ public class IntentSaveQueueable implements Queueable {
             if (seen.contains(key)) continue;
             seen.add(key);
             merged.add(skill);
+        }
+    }
+
+    private Id parseId(String value) {
+        if (String.isBlank(value)) return null;
+        try {
+            return (Id) value;
+        } catch (Exception e) {
+            return null;
         }
     }
 

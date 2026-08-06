@@ -3,6 +3,7 @@
     <fullName>Candidate_Summary__c</fullName>
     <label>Candidate Summary</label>
     <length>32768</length>
+    <trackFeedHistory>false</trackFeedHistory>
     <trackHistory>false</trackHistory>
     <type>LongTextArea</type>
     <visibleLines>8</visibleLines>

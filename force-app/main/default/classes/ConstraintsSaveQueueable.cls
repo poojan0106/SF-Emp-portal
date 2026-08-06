@@ -92,11 +92,28 @@ public class ConstraintsSaveQueueable implements Queueable {
             }
             
             upsert constraints;
+            BlakeneyInteractionEventService.publish(
+                parseId(contactId),
+                'Profile Update',
+                'Career_Constraints__c preferences/location/salary/culture',
+                null,
+                constraints.Id,
+                null
+            );
             
         } catch (Exception e) {
             Database.rollback(sp);
             System.debug(LoggingLevel.ERROR, 'ConstraintsSaveQueueable Error: ' + e.getMessage());
             System.debug(LoggingLevel.ERROR, 'Stack: ' + e.getStackTraceString());
+        }
+    }
+
+    private Id parseId(String value) {
+        if (String.isBlank(value)) return null;
+        try {
+            return (Id) value;
+        } catch (Exception e) {
+            return null;
         }
     }
 }

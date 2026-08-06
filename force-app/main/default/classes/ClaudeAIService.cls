@@ -8,7 +8,7 @@ Uses prefill technique to guarantee correct questions
 public with sharing class ClaudeAIService {
     
     private static final String API_ENDPOINT = 'https://api.anthropic.com/v1/messages';
-    private static final String MODEL = 'claude-sonnet-4-20250514';
+    private static final String MODEL = 'claude-opus-4-6';
     private static final Integer MAX_TOKENS = 4096;
     
     public static final String INPUT_TEXT = 'text';

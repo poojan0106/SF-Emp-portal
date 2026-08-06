@@ -84,7 +84,7 @@ public with sharing class TalentPoolController {
             'AI_CV_Score__c, AI_CV_Tier__c, AI_CV_Score_Explanation__c, Combined_Score__c, Questionnaire_Score__c, ' +
             'Sentiment_Tags__c, Interest_Date__c, Full_Profile_Unlocked__c, Status, Swipe_Event__c, ' +
             'Identity_Reveal_Status__c, Identity_Reveal_Requested_Date__c, Identity_Reveal_Responded_Date__c ' +
-            'FROM CampaignMember WHERE CampaignId = :poolId AND Status IN (\'In League\', \'Interview Requested\', \'Interview Confirmed\', \'Interview Rejected\', \'Reschedule Requested\', \'Candidate Shortlisted\', \'Candidate Rejected\')';
+            'FROM CampaignMember WHERE CampaignId = :poolId AND ( Swipe_Event__c != NULL OR Swipe_Event__c !=\'\' )';
         
         // Apply filters
         if (filters != null) {
@@ -601,7 +601,7 @@ public with sharing class TalentPoolController {
         List<AggregateResult> results = [
             SELECT AVG(AI_CV_Score__c) avgScore, AVG(Contact.Years_Experience__c) avgExp
             FROM CampaignMember
-            WHERE CampaignId = :poolId AND Status IN ('Interested', 'In League')
+            WHERE CampaignId = :poolId
         ];
         
         System.debug('DEBUG 43: Aggregate Results Size = ' + results.size());
@@ -617,13 +617,13 @@ public with sharing class TalentPoolController {
         System.debug('DEBUG 45: newThisWeek Count = ' + newThisWeek);
         
         Integer count = [SELECT COUNT() FROM CampaignMember 
-                WHERE CampaignId = :poolId AND Status IN ('Interested', 'In League')];
+                WHERE CampaignId = :poolId ];
         
         // ✅ Query Job Roles
         List<CampaignMember> campaignMembers = [
             SELECT Contact.Job_Role__c 
             FROM CampaignMember 
-            WHERE Status IN ('Interested', 'In League') AND CampaignId = :poolId
+            WHERE CampaignId = :poolId
         ];
         
         PoolMetrics metrics = new PoolMetrics();
@@ -743,7 +743,6 @@ public with sharing class TalentPoolController {
                 SELECT Contact.R_ATS__Skills__c
                 FROM CampaignMember
                 WHERE CampaignId = :poolId 
-                AND Status IN ('Interested', 'In League')
             ];
             
             for (CampaignMember member : members) {

@@ -3,7 +3,7 @@
     <fullName>Last_Error__c</fullName>
     <label>Last Error</label>
     <length>32768</length>
-    <required>false</required>
+    <trackTrending>false</trackTrending>
     <type>LongTextArea</type>
     <visibleLines>4</visibleLines>
 </CustomField>

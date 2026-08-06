@@ -3,6 +3,8 @@
     <fullName>Candidate_Flags__c</fullName>
     <label>Candidate Flags</label>
     <length>32768</length>
+    <trackFeedHistory>false</trackFeedHistory>
+    <trackHistory>false</trackHistory>
     <type>LongTextArea</type>
     <visibleLines>4</visibleLines>
 </CustomField>

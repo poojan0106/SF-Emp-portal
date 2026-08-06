@@ -126,7 +126,7 @@ global with sharing class FlintRestAPI {
             Status__c = 'Active',
             Started_At__c = DateTime.now(),
             Session_ID__c = generateSessionId(),
-            AI_Model__c = 'claude-sonnet-4-20250514',
+            AI_Model__c = 'claude-opus-4-6',
             Contact__c = contactId,
             Message_Count__c = 0
         );

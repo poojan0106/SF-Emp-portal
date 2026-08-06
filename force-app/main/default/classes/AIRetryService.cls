@@ -12,6 +12,7 @@ public with sharing class AIRetryService implements Schedulable {
                 WHERE Status__c IN ('Pending', 'Processing')
                 AND Operation__c = :operation
                 AND Contact__c = :contactId
+                AND Campaign_Member__c = :campaignMemberId
                 LIMIT 1
             ];
             if (!existing.isEmpty()) return;
@@ -63,8 +64,13 @@ public with sharing class AIRetryService implements Schedulable {
             Boolean success = false;
             if (row.Operation__c == 'CV Enhancement' && row.Contact__c != null) {
                 success = AICVEnhancementService.enhanceContactFromRetry(row.Contact__c);
-            } else if (row.Operation__c == 'CV Scoring' && String.isNotBlank(row.Campaign_Member__c)) {
+            } else if (row.Operation__c == 'Blakeney Interaction Enrichment' && row.Contact__c != null) {
+                success = AICVEnhancementService.enhanceContactWithBlakeneyContext(row.Contact__c, null, null, 'Profile Update', 'Retry from AI_Retry__c', null);
+            } else if (row.Operation__c == 'CV Scoring' && row.Campaign_Member__c != null) {
                 CandidateCVScoringService.scoreCampaignMember((Id) row.Campaign_Member__c);
+                success = true;
+            } else if (row.Operation__c == 'CV Scoring' && row.Contact__c != null) {
+                CandidateCVScoringService.scoreCampaignMembersForContact(row.Contact__c);
                 success = true;
             }
 
@@ -74,6 +80,9 @@ public with sharing class AIRetryService implements Schedulable {
                 Next_Run_At__c = success ? null : System.now().addMinutes(RETRY_DELAY_MINUTES),
                 Last_Error__c = success ? null : 'AI operation still failed or returned fallback.'
             );
+            if (!success && attempts + 1 >= MAX_ATTEMPTS) {
+                notifyManualReview(row, 'AI operation still failed or returned fallback.');
+            }
         } catch (Exception e) {
             update new AI_Retry__c(
                 Id = row.Id,
@@ -81,6 +90,36 @@ public with sharing class AIRetryService implements Schedulable {
                 Next_Run_At__c = attempts + 1 >= MAX_ATTEMPTS ? null : System.now().addMinutes(RETRY_DELAY_MINUTES),
                 Last_Error__c = safe(e.getMessage())
             );
+            if (attempts + 1 >= MAX_ATTEMPTS) {
+                notifyManualReview(row, e.getMessage());
+            }
+        }
+    }
+
+    @InvocableMethod(label='Retry AI Jobs Now' description='Runs due AI retry records now.')
+    public static void retryNow(List<String> ignored) {
+        runDueRetries(50);
+    }
+
+    private static void notifyManualReview(AI_Retry__c row, String reason) {
+        if (row == null) return;
+        if (row.Contact__c != null) {
+            try {
+                AICVEnhancementService.flagContactForManualReview(row.Contact__c, reason);
+            } catch (Exception e) {
+                System.debug(LoggingLevel.WARN, 'Manual review flag skipped: ' + e.getMessage());
+            }
+        }
+        try {
+            insert new Task(
+                Subject = 'AI retry failed - manual review',
+                Description = 'Operation: ' + row.Operation__c + '\nContact: ' + row.Contact__c + '\nCampaignMember: ' + row.Campaign_Member__c + '\nError: ' + safe(reason),
+                Status = 'Not Started',
+                Priority = 'High',
+                WhoId = row.Contact__c
+            );
+        } catch (Exception e) {
+            System.debug(LoggingLevel.WARN, 'AI failure admin task skipped: ' + e.getMessage());
         }
     }
 

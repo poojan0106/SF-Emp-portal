@@ -15,6 +15,14 @@ public class CandidateCVScoringService {
 
         Map<Id, Contact> contacts = fetchContacts(contactIds);
         Map<Id, Campaign> campaigns = fetchCampaigns(campaignIds);
+        Map<Id, SObject> intents = fetchLatestByContact('Career_Intent__c', contactIds, new List<String>{
+            'Id', 'Contact__c', 'Candidate__c', 'Short_Term_Goal__c', 'Medium_Term_Goal__c',
+            'Long_Term_Goal__c', 'Aspirational_Goal__c', 'Skills__c', 'Industry_Preferences__c'
+        });
+        Map<Id, SObject> constraints = fetchLatestByContact('Career_Constraints__c', contactIds, new List<String>{
+            'Id', 'Contact__c', 'Preferred_Locations__c', 'Remote_Work_Requirement__c',
+            'Min_Salary__c', 'Max_Salary__c', 'Company_Size_Preference__c', 'Culture_Preferences__c'
+        });
         ScoringConfig config = loadConfig();
         ensureCampaignMemberStatus(campaignIds, 'CV Review Required');
 
@@ -24,7 +32,7 @@ public class CandidateCVScoringService {
             Campaign campaign = campaigns.get(member.CampaignId);
             if (candidate == null || campaign == null) continue;
 
-            ScoreResult result = calculate(candidate, campaign, member, config);
+            ScoreResult result = calculate(candidate, campaign, member, config, intents.get(candidate.Id), constraints.get(candidate.Id));
             CampaignMember updateMember = new CampaignMember(Id = member.Id);
             putIfFieldExists(updateMember, CampaignMember.SObjectType, 'AI_CV_Score__c', result.score);
             putIfFieldExists(updateMember, CampaignMember.SObjectType, 'AI_CV_Tier__c', result.tier);
@@ -81,6 +89,8 @@ public class CandidateCVScoringService {
     private static List<CampaignMember> fetchMembers(Id contactId) {
         Set<String> fields = new Set<String>{ 'Id', 'ContactId', 'CampaignId', 'Status' };
         addIfFieldExists(fields, CampaignMember.SObjectType, 'Questionnaire_Score__c');
+        addIfFieldExists(fields, CampaignMember.SObjectType, 'AI_CV_Score__c');
+        addIfFieldExists(fields, CampaignMember.SObjectType, 'AI_CV_Tier__c');
         String soql = 'SELECT ' + String.join(new List<String>(fields), ',') +
             ' FROM CampaignMember WHERE ContactId = :contactId';
         return Database.query(soql);
@@ -118,14 +128,18 @@ public class CandidateCVScoringService {
         return new Map<Id, Campaign>((List<Campaign>) Database.query(soql));
     }
 
-    private static ScoreResult calculate(Contact candidate, Campaign campaign, CampaignMember member, ScoringConfig config) {
-        Decimal skills = scoreSkills(value(candidate, 'R_ATS__Skills__c'),
+    private static ScoreResult calculate(Contact candidate, Campaign campaign, CampaignMember member, ScoringConfig config, SObject intent, SObject constraints) {
+        String candidateSkillText = firstNonBlank(value(candidate, 'R_ATS__Skills__c'), value(intent, 'Skills__c'));
+        Decimal skills = scoreSkills(candidateSkillText,
             value(campaign, 'Must_Have_Skills__c'), value(campaign, 'Nice_To_Have_Skills__c'), config);
         Decimal experience = scoreExperience(decimalValue(candidate, 'Years_Experience__c'), value(campaign, 'Job_Seniority__c'), config);
-        Decimal location = scoreLocation(candidate, value(campaign, 'Location_Requirement__c'), config);
-        Decimal salary = scoreSalary(candidate, campaign, config);
+        Decimal location = scoreLocation(candidate, value(campaign, 'Location_Requirement__c'), value(constraints, 'Preferred_Locations__c'), config);
+        Decimal salary = scoreSalary(candidate, campaign, constraints, config);
+        String goalFit = scoreGoalFit(intent, campaign);
 
         Decimal total = clamp(skills + experience + location + salary);
+        Decimal previousScore = decimalValue(member, 'AI_CV_Score__c');
+        String previousTier = value(member, 'AI_CV_Tier__c');
         ScoreResult result = new ScoreResult();
         result.score = total;
         result.tier = total >= config.potentialMatchMin ? 'Potential Match' : total >= config.reviewRequiredMin ? 'Review Required' : 'Poor Match';
@@ -134,8 +148,26 @@ public class CandidateCVScoringService {
             'Experience: ' + experience + '/' + config.experienceWeight + '\n' +
             'Location: ' + location + '/' + config.locationWeight + '\n' +
             'Salary Fit: ' + salary + '/' + config.salaryWeight + '\n' +
-            'Strengths/gaps generated from available Campaign and Contact fields.';
+            'Career Goal Fit: ' + goalFit + '\n' +
+            'Strengths/gaps generated from available Campaign and Contact fields.' +
+            scoreChangeNote(previousScore, previousTier, result.score, result.tier, config);
         return result;
+    }
+
+    private static String scoreChangeNote(Decimal previousScore, String previousTier, Decimal newScore, String newTier, ScoringConfig config) {
+        if (previousScore == null && String.isBlank(previousTier)) return '';
+        List<String> notes = new List<String>();
+        if (previousScore != null && newScore != null) {
+            Decimal delta = newScore - previousScore;
+            if (delta >= 10) notes.add('now matches stronger by +' + delta.setScale(0) + ' points');
+            if (delta <= -10) notes.add('no longer matches as strongly by ' + delta.setScale(0) + ' points');
+            if (previousScore < config.questionnaireThreshold && newScore >= config.questionnaireThreshold) notes.add('now meets questionnaire threshold');
+            if (previousScore >= config.questionnaireThreshold && newScore < config.questionnaireThreshold) notes.add('no longer meets questionnaire threshold');
+        }
+        if (String.isNotBlank(previousTier) && String.isNotBlank(newTier) && previousTier != newTier) {
+            notes.add('tier changed from ' + previousTier + ' to ' + newTier);
+        }
+        return notes.isEmpty() ? '' : '\nMatch Change: ' + String.join(notes, '; ') + '.';
     }
 
     private static Decimal scoreSkills(String candidateSkillsText, String mustText, String niceText, ScoringConfig config) {
@@ -161,10 +193,11 @@ public class CandidateCVScoringService {
         return clampPart(config.experienceWeight * (ratio > 1 ? 1 : ratio), config.experienceWeight);
     }
 
-    private static Decimal scoreLocation(Contact candidate, String jobLocation, ScoringConfig config) {
+    private static Decimal scoreLocation(Contact candidate, String jobLocation, String preferredLocations, ScoringConfig config) {
         if (String.isBlank(jobLocation)) return 0;
         String haystack = (String.valueOf(candidate.MailingCity) + ' ' +
-            String.valueOf(candidate.MailingState) + ' ' + String.valueOf(candidate.MailingCountry)).toLowerCase();
+            String.valueOf(candidate.MailingState) + ' ' + String.valueOf(candidate.MailingCountry) + ' ' +
+            String.valueOf(preferredLocations)).toLowerCase();
         if (String.isBlank(haystack.replace('null', '').trim())) return 0;
         for (String token : jobLocation.toLowerCase().split('[,;\\s]+')) {
             if (String.isNotBlank(token) && haystack.contains(token)) return config.locationWeight;
@@ -172,7 +205,7 @@ public class CandidateCVScoringService {
         return 0;
     }
 
-    private static Decimal scoreSalary(Contact candidate, Campaign campaign, ScoringConfig config) {
+    private static Decimal scoreSalary(Contact candidate, Campaign campaign, SObject constraints, ScoringConfig config) {
         Decimal candidateMin = firstDecimalValue(candidate, new List<String>{
             'R_ATS__Minimum_Salary__c',
             'Min_Salary_Expectation__c',
@@ -183,6 +216,8 @@ public class CandidateCVScoringService {
             'Max_Salary_Expectation__c',
             'Maximum_Salary__c'
         });
+        if (candidateMin == null) candidateMin = decimalValue(constraints, 'Min_Salary__c');
+        if (candidateMax == null) candidateMax = decimalValue(constraints, 'Max_Salary__c');
         Decimal jobMin = decimalValue(campaign, 'R_ATS__Minimum_Salary__c');
         Decimal jobMax = decimalValue(campaign, 'R_ATS__Maximum_Salary__c');
         if (candidateMin == null && candidateMax == null) return 0;
@@ -194,6 +229,27 @@ public class CandidateCVScoringService {
         Decimal jobHigh = jobMax == null ? jobMin : jobMax;
         Boolean overlaps = low <= jobHigh && high >= jobLow;
         return overlaps ? config.salaryWeight : 0;
+    }
+
+    private static String scoreGoalFit(SObject intent, Campaign campaign) {
+        if (intent == null || campaign == null) return 'No saved career goal context';
+        String goals = (
+            String.valueOf(value(intent, 'Short_Term_Goal__c')) + ' ' +
+            String.valueOf(value(intent, 'Medium_Term_Goal__c')) + ' ' +
+            String.valueOf(value(intent, 'Long_Term_Goal__c')) + ' ' +
+            String.valueOf(value(intent, 'Aspirational_Goal__c')) + ' ' +
+            String.valueOf(value(intent, 'Industry_Preferences__c'))
+        ).toLowerCase();
+        String campaignText = (
+            String.valueOf(campaign.Name) + ' ' +
+            String.valueOf(value(campaign, 'Must_Have_Skills__c')) + ' ' +
+            String.valueOf(value(campaign, 'Nice_To_Have_Skills__c'))
+        ).toLowerCase();
+        Integer matches = 0;
+        for (String token : campaignText.split('[,;\\s]+')) {
+            if (String.isNotBlank(token) && token.length() > 3 && goals.contains(token)) matches++;
+        }
+        return matches > 0 ? 'Aligned with saved Blakeney goals' : 'No direct goal alignment detected';
     }
 
     private static String buildProtectedSummary(Contact candidate, ScoreResult result) {
@@ -291,6 +347,37 @@ public class CandidateCVScoringService {
             if (value != null) return value;
         }
         return null;
+    }
+
+    private static String firstNonBlank(String first, String second) {
+        return String.isNotBlank(first) ? first : second;
+    }
+
+    private static Map<Id, SObject> fetchLatestByContact(String objectName, Set<Id> contactIds, List<String> requestedFields) {
+        Map<Id, SObject> result = new Map<Id, SObject>();
+        if (contactIds == null || contactIds.isEmpty() || !Schema.getGlobalDescribe().containsKey(objectName)) return result;
+        Map<String, Schema.SObjectField> fieldMap = Schema.getGlobalDescribe().get(objectName).getDescribe().fields.getMap();
+        if (!fieldMap.containsKey('Contact__c')) return result;
+        List<String> fields = new List<String>();
+        for (String fieldName : requestedFields) {
+            if (fieldMap.containsKey(fieldName)) fields.add(fieldName);
+        }
+        if (!fields.contains('Id')) fields.add('Id');
+        if (!fields.contains('Contact__c')) fields.add('Contact__c');
+
+        try {
+            List<SObject> rows = Database.query(
+                'SELECT ' + String.join(fields, ',') + ' FROM ' + objectName +
+                ' WHERE Contact__c IN :contactIds ORDER BY LastModifiedDate DESC'
+            );
+            for (SObject row : rows) {
+                Id contactId = (Id) row.get('Contact__c');
+                if (contactId != null && !result.containsKey(contactId)) result.put(contactId, row);
+            }
+        } catch (Exception e) {
+            System.debug(LoggingLevel.WARN, objectName + ' scoring context skipped: ' + e.getMessage());
+        }
+        return result;
     }
 
     private static ScoringConfig loadConfig() {
