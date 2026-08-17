@@ -199,7 +199,6 @@ public with sharing class JobListingService {
                    SystemModstamp
             FROM CampaignMember
             WHERE CampaignId = :campaignId
-            AND Status IN :PIPELINE_STATUSES
             ORDER BY Status ASC, CreatedDate DESC
         ];
         

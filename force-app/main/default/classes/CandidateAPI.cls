@@ -430,7 +430,7 @@ global class CandidateAPI {
                     Contact.Interest_Notes__c, Contact.Expected_Salary__c, Contact.Work_Preference__c,
                     Contact.Candidate_Sentiment__c, AI_CV_Score__c, Combined_Score__c
                 FROM CampaignMember
-                WHERE Campaign.Employer__c = :accountId AND Status IN ('Interested', 'In League')
+                WHERE Campaign.Employer__c = :accountId
                 LIMIT 50000
             ];
             

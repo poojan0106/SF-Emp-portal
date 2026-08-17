@@ -120,7 +120,6 @@ public with sharing class TalentPoolMetricsService {
             SELECT COUNT()
             FROM CampaignMember
             WHERE CampaignId = :campaignId
-            AND Status IN :ACTIVE_STATUSES
         ];
     }
     
@@ -167,7 +166,6 @@ public with sharing class TalentPoolMetricsService {
             SELECT Intent_Added_Date__c, CreatedDate
             FROM CampaignMember
             WHERE CampaignId = :campaignId
-            AND Status IN :ACTIVE_STATUSES
         ];
         
         System.debug('Members found: ' + members.size());
@@ -225,7 +223,6 @@ public with sharing class TalentPoolMetricsService {
                    Contact.Profile_Completeness__c
             FROM CampaignMember
             WHERE CampaignId = :campaignId
-            AND Status IN :ACTIVE_STATUSES
         ];
         
         if (members.isEmpty()) return null;
@@ -333,7 +330,6 @@ public with sharing class TalentPoolMetricsService {
                  ' | Days Since: ' + daysSince);
             
             // Pool Size: Count active statuses
-            if (ACTIVE_STATUSES.contains(m.Status)) {
                 metrics.poolSize++;
                 
                 // For active members, calculate quality metrics
@@ -349,7 +345,6 @@ public with sharing class TalentPoolMetricsService {
                     m.Contact.Last_Activity_Date__c >= thirtyDaysAgo) {
                     metrics.activeMembersCount++;
                 }
-            }
             
             // New This Week: Check add date regardless of status
             if (addedDate >= sevenDaysAgo) {

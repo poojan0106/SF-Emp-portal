@@ -172,7 +172,6 @@ global without sharing class EmployerDashboardController {
                 WHERE Campaign.Employer__c = :accountId
                 AND Campaign.Status = 'Active'
                 AND Campaign.IsActive = true
-                AND Status IN ('In League', 'Interview Requested', 'Interview Confirmed', 'Interview Rejected', 'Reschedule Requested')
                 ORDER BY Interest_Date__c DESC
                 LIMIT :queryLimit
             ]) {
@@ -192,6 +191,18 @@ global without sharing class EmployerDashboardController {
                 } else if (member.Status == 'Interview Requested') {
                     type = 'interview_requested';
                     message = 'Interview requested for ' + candidateName + ' on ' + member.Campaign.Name;
+                }else if (member.Status == 'In League') {
+                    type = 'in_league';
+                    message = candidateName + ' is now in league for ' + member.Campaign.Name;
+                }else if (member.Status == 'Candidate Rejected') {
+                    type = 'candidate_rejected';
+                    message = 'You have rejected ' + candidateName + ' for this position' + member.Campaign.Name;
+                }else if (member.Status == 'Candidate Shortlisted') {
+                    type = 'candidate_shortlisted';
+                    message = 'You have shortlisted ' + candidateName + ' for this position: ' + member.Campaign.Name;
+                }else if (member.Status == '=CV Review Required') {
+                    type = 'cv_review_required';
+                    message = 'CV review required for ' + candidateName + ' for this position: ' + member.Campaign.Name;
                 }
                 activities.add(new ActivityItem(type, message, member.Interest_Date__c == null ? member.CreatedDate : member.Interest_Date__c, member.Id));
             }
