@@ -30,7 +30,14 @@ public class JobCreationService {
       R_ATS__Minimum_Salary__c = jobReq.salMin != null ? Decimal.valueOf(jobReq.salMin) : null,
       R_ATS__Maximum_Salary__c = jobReq.salMax != null ? Decimal.valueOf(jobReq.salMax) : null,
       Remote_Position__c = jobReq.remote,
-      R_ATS__Location__c = jobReq.remote ? 'Remote' : jobReq.loc,
+      R_ATS__Location__c = jobReq.remote ? 'Remote' : buildLocationString(jobReq),
+      JobStreet__c = jobReq.remote ? null : jobReq.street,
+      JobCity__c = jobReq.remote ? null : jobReq.city,
+      JobState__c = jobReq.remote ? null : jobReq.state,
+      JobPostalCode__c = jobReq.remote ? null : jobReq.postalCode,
+      JobCountry__c = jobReq.remote ? null : jobReq.country,
+      JobLatitude__c = jobReq.remote ? null : parseDecimalOrNull(jobReq.latitude),
+      JobLongitude__c = jobReq.remote ? null : parseDecimalOrNull(jobReq.longitude),
       Must_Have_Skills__c = skillsToText(jobReq.skills)
     );
     
@@ -77,6 +84,24 @@ public class JobCreationService {
     if (lower == 'lead') return 'Lead';
     if (lower == 'executive') return 'Executive';
     return null;
+  }
+
+  private static String buildLocationString(JobCreationRequest jobReq) {
+    if (String.isNotBlank(jobReq.loc)) return jobReq.loc;
+    List<String> parts = new List<String>();
+    if (String.isNotBlank(jobReq.city)) parts.add(jobReq.city.trim());
+    if (String.isNotBlank(jobReq.state)) parts.add(jobReq.state.trim());
+    if (String.isNotBlank(jobReq.country)) parts.add(jobReq.country.trim());
+    return parts.isEmpty() ? null : String.join(parts, ', ');
+  }
+
+  private static Decimal parseDecimalOrNull(String value) {
+    if (String.isBlank(value)) return null;
+    try {
+      return Decimal.valueOf(value);
+    } catch (Exception e) {
+      return null;
+    }
   }
 
   private static void notifyInterestedCandidatesForNewJob(Campaign campaign, JobCreationRequest jobReq) {
@@ -128,6 +153,13 @@ public class JobCreationService {
       public String dept;
       public String loc;
       public String description;
+      public String street;
+      public String city;
+      public String state;
+      public String postalCode;
+      public String country;
+      public String latitude;
+      public String longitude;
       public List<String> skills;
       public String salMin;
       public String salMax;

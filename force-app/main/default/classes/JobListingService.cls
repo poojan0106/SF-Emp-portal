@@ -106,6 +106,7 @@ public with sharing class JobListingService {
             + 'RecordType.DeveloperName, Department__c, Status, Type, IsActive, Seniority_Level__c, Job_Seniority__c, '
             + 'StartDate, EndDate, R_ATS__No_of_openings__c, R_ATS__Salary__c, '
             + 'R_ATS__Minimum_Salary__c, R_ATS__Maximum_Salary__c, '
+            + 'JobStreet__c, JobCity__c, JobState__c, JobPostalCode__c, JobCountry__c, JobLatitude__c, JobLongitude__c, '
             + 'R_ATS__Bill_Rate__c, R_ATS__Pay_Rate__c, Source__c, Owner.Name, Description, '
             + 'Opportunity__r.Name, Employer__c, Employer__r.Name, '
             + 'NumberOfContacts, '
@@ -174,6 +175,7 @@ public with sharing class JobListingService {
             SELECT Id, Name, R_ATS__Job_Reference_Number__c,
                 RecordType.DeveloperName, Department__c, Status, Type, IsActive, Seniority_Level__c, Job_Seniority__c,
                 StartDate, EndDate, Description, R_ATS__No_of_openings__c,R_ATS__Location__c,
+                JobStreet__c, JobCity__c, JobState__c, JobPostalCode__c, JobCountry__c, JobLatitude__c, JobLongitude__c,
                 R_ATS__Salary__c, R_ATS__Minimum_Salary__c, R_ATS__Maximum_Salary__c,
                 R_ATS__Bill_Rate__c, R_ATS__Pay_Rate__c, Source__c, Must_Have_Skills__c,
                 Owner.Name, Opportunity__r.Name, Employer__c,
@@ -314,7 +316,8 @@ public with sharing class JobListingService {
         if (req.remote == true) {
             c.R_ATS__Location__c = 'Remote';
         } else {
-            c.R_ATS__Location__c = buildLocationString(req.city, req.state);
+            c.R_ATS__Location__c = String.isNotBlank(req.loc) ? req.loc : buildLocationString(req.city, req.state);
+            applyJobLocationFields(c, req);
         }
 
         if (req.publishImmediately == true) {
@@ -365,7 +368,8 @@ public with sharing class JobListingService {
                    R_ATS__Minimum_Salary__c, R_ATS__Maximum_Salary__c,
                    R_ATS__Bill_Rate__c, R_ATS__Pay_Rate__c, R_ATS__No_of_openings__c,
                    Seniority_Level__c, Job_Seniority__c,
-                   EndDate, Urgency__c, R_ATS__Location__c, Created_Via__c, Source__c
+                   EndDate, Urgency__c, R_ATS__Location__c, Created_Via__c, Source__c,
+                   JobStreet__c, JobCity__c, JobState__c, JobPostalCode__c, JobCountry__c, JobLatitude__c, JobLongitude__c
             FROM Campaign 
             WHERE Id = :campaignId 
             LIMIT 1
@@ -458,9 +462,11 @@ public with sharing class JobListingService {
         // Handle location (Remote vs. City/State)
         if (req.remote == true) {
             c.R_ATS__Location__c = 'Remote';
+            clearJobLocationFields(c);
             System.debug('Updated Location: Remote');
         } else if (String.isNotBlank(req.loc)) {  // ← Changed from req.city/req.state
             c.R_ATS__Location__c = req.loc;
+            applyJobLocationFields(c, req);
             System.debug('Updated Location: ' + req.loc);
         }
         
@@ -725,6 +731,35 @@ public with sharing class JobListingService {
     // PRIVATE HELPERS
     // ─────────────────────────────────────────────────────
 
+    private static void applyJobLocationFields(Campaign c, JobListingDTO.JobCreateRequest req) {
+        c.JobStreet__c = req.street;
+        c.JobCity__c = req.city;
+        c.JobState__c = req.state;
+        c.JobPostalCode__c = req.postalCode;
+        c.JobCountry__c = req.country;
+        c.JobLatitude__c = parseDecimalOrNull(req.latitude);
+        c.JobLongitude__c = parseDecimalOrNull(req.longitude);
+    }
+
+    private static void clearJobLocationFields(Campaign c) {
+        c.JobStreet__c = null;
+        c.JobCity__c = null;
+        c.JobState__c = null;
+        c.JobPostalCode__c = null;
+        c.JobCountry__c = null;
+        c.JobLatitude__c = null;
+        c.JobLongitude__c = null;
+    }
+
+    private static Decimal parseDecimalOrNull(String value) {
+        if (String.isBlank(value)) return null;
+        try {
+            return Decimal.valueOf(value);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     private static List<JobListingDTO.JobSummary> buildJobSummaries(
         List<Campaign> campaigns
     ) {
@@ -762,6 +797,13 @@ public with sharing class JobListingService {
         s.seniority = String.isNotBlank(c.Seniority_Level__c) ? c.Seniority_Level__c : c.Job_Seniority__c;
         s.dept = c.Department__c;
         s.location = c.R_ATS__Location__c != null ? c.R_ATS__Location__c : '';
+        s.street = c.JobStreet__c;
+        s.city = c.JobCity__c;
+        s.state = c.JobState__c;
+        s.postalCode = c.JobPostalCode__c;
+        s.country = c.JobCountry__c;
+        s.latitude = c.JobLatitude__c;
+        s.longitude = c.JobLongitude__c;
         s.status = derivePortalStatus(c.Status, c.IsActive);
         s.campaignStatus = c.Status;
         s.posted = c.StartDate;

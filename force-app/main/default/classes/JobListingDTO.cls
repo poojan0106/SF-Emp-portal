@@ -14,6 +14,13 @@ public with sharing class JobListingDTO {
         @AuraEnabled public String dept;            // ← changed from department
         @AuraEnabled public String seniority;
         @AuraEnabled public String location;
+        @AuraEnabled public String street;
+        @AuraEnabled public String city;
+        @AuraEnabled public String state;
+        @AuraEnabled public String postalCode;
+        @AuraEnabled public String country;
+        @AuraEnabled public Decimal latitude;
+        @AuraEnabled public Decimal longitude;
         @AuraEnabled public String status;
         @AuraEnabled public String campaignStatus;  // Keep internal SF status
         @AuraEnabled public Date posted;            // ← changed from postedDate
@@ -126,6 +133,8 @@ public with sharing class JobListingDTO {
         @AuraEnabled public String state;
         @AuraEnabled public String postalCode;
         @AuraEnabled public String country;
+        @AuraEnabled public String latitude;
+        @AuraEnabled public String longitude;
     }
 
     // ── Filters for listing query ──
