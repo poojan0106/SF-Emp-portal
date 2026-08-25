@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Created_From_Candidate_Portal__c</fullName>
+    <defaultValue>false</defaultValue>
+    <description>True when this Campaign Member was created from the candidate portal Apply button.</description>
+    <externalId>false</externalId>
+    <label>Created From Candidate Portal</label>
+    <trackTrending>false</trackTrending>
+    <type>Checkbox</type>
+</CustomField>

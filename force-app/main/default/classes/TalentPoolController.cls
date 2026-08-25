@@ -84,7 +84,7 @@ public with sharing class TalentPoolController {
             'AI_CV_Score__c, AI_CV_Tier__c, AI_CV_Score_Explanation__c, Combined_Score__c, Questionnaire_Score__c, ' +
             'Sentiment_Tags__c, Interest_Date__c, Full_Profile_Unlocked__c, Status, Swipe_Event__c, ' +
             'Identity_Reveal_Status__c, Identity_Reveal_Requested_Date__c, Identity_Reveal_Responded_Date__c ' +
-            'FROM CampaignMember WHERE CampaignId = :poolId AND ( Swipe_Event__c != NULL OR Swipe_Event__c !=\'\' )';
+            'FROM CampaignMember WHERE CampaignId = :poolId AND ( Swipe_Event__c != NULL OR Created_From_Candidate_Portal__c = true OR Swipe_Event__c !=\'\' )';
         
         // Apply filters
         if (filters != null) {
